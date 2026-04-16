@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-inter: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #0a0b0d;
+  color: #e5e7eb;
+  font-family: var(--font-inter);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 스크롤바 스타일 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111318;
+}
+::-webkit-scrollbar-thumb {
+  background: #252932;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #374151;
+}
+
+/* 상승/하락 색상 */
+.positive { color: #22c55e; }
+.negative { color: #ef4444; }
+.neutral  { color: #9ca3af; }
+
+/* 카드 기본 스타일 */
+.card {
+  background: #111318;
+  border: 1px solid #252932;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+/* 테이블 스타일 */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.data-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 500;
+  color: #6b7280;
+  border-bottom: 1px solid #252932;
+  background: #0a0b0d;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.data-table td {
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid #1a1d24;
+  color: #e5e7eb;
+}
+.data-table tr:hover td {
+  background: #1a1d24;
+}
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* 뱃지 스타일 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.badge-green { background: #052e16; color: #22c55e; border: 1px solid #166534; }
+.badge-red   { background: #2b0a0a; color: #ef4444; border: 1px solid #991b1b; }
+.badge-blue  { background: #0c1a3d; color: #60a5fa; border: 1px solid #1d4ed8; }
+.badge-gold  { background: #1c1400; color: #f59e0b; border: 1px solid #92400e; }
+
+/* 애니메이션 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+.fade-in { animation: fadeIn 0.35s ease-out; }
+
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+  50%       { box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.15); }
+}
+.live-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse-green 2s infinite;
+}
+
+/* Number 포맷 */
+.tabular-nums { font-variant-numeric: tabular-nums; }
