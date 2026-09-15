@@ -1,11 +1,13 @@
 import itertools
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from pathlib import Path
 
 import pytest
 import requests
 
-from bars import KST
+from bars import KST, Bar
 from toss import TossAuthError, TossClient, TossError
 
 NOW = datetime(2026, 9, 15, 20, 30, tzinfo=KST)
@@ -235,3 +237,85 @@ def test_throttle_waits_between_calls(tmp_path):
     client.rps = 10
     get(client)
     assert sleeps == [pytest.approx(0.1)]
+
+
+DAY = date(2026, 9, 14)       # 월요일
+PREV_DAY = date(2026, 9, 11)  # 금요일
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def candle(end, price="70000"):
+    """끝나는 시각 end의 캔들 한 개를 응답 형식으로 만든다."""
+    return {"timestamp": end.isoformat(), "openPrice": price, "highPrice": price,
+            "lowPrice": price, "closePrice": price, "volume": "100", "currency": "KRW"}
+
+
+def session_ends(day):
+    """08:01~20:00 매분, 봉이 끝나는 시각 720개를 만든다."""
+    first = datetime.combine(day, time(8, 1), KST)
+    return [first + timedelta(minutes=i) for i in range(720)]
+
+
+def market(ends, next_offset):
+    """before 이하 봉을 최신순 200개씩 주고 nextBefore를 마지막 봉 시각 + next_offset으로 주는 on_get을 만든다."""
+    def on_get(params):
+        before = datetime.fromisoformat(params["before"])
+        page = sorted((e for e in ends if e <= before), reverse=True)[:200]
+        return ok([candle(e) for e in page], (page[-1] + next_offset).isoformat() if page else None)
+    return on_get
+
+
+def test_fetch_day_parses_candle_fields(tmp_path):
+    """캔들을 봉 시작 시각(−1분)·Decimal 가격·int 거래량의 Bar로 바꿔 오름차순으로 반환한다."""
+    body = json.loads((FIXTURES / "toss_candles.json").read_text(encoding="utf-8"))
+    fake = FakeToss(on_get=lambda params: FakeResponse(body))
+    bars = make_client(tmp_path, fake).fetch_day("005930", DAY)
+    assert [b.ts for b in bars] == [datetime(2026, 9, 14, 9, m, tzinfo=KST) for m in (0, 1, 2)]
+    assert bars[-1] == Bar(datetime(2026, 9, 14, 9, 2, tzinfo=KST), Decimal("70100"),
+                           Decimal("70300"), Decimal("70000"), Decimal("70200"), 15234)
+    assert len(fake.gets()) == 1
+
+
+@pytest.mark.parametrize("next_offset", [timedelta(minutes=-1), timedelta(0)])
+def test_fetch_day_walks_pages_back_to_previous_day(tmp_path, next_offset):
+    """200개씩 거꾸로 받아 전날 봉에서 멈추고, nextBefore 겹침과 무관하게 중복 없는 720봉을 반환한다."""
+    fake = FakeToss(on_get=market(session_ends(PREV_DAY) + session_ends(DAY), next_offset))
+    bars = make_client(tmp_path, fake).fetch_day("005930", DAY)
+    assert len(bars) == 720
+    assert bars[0].ts == datetime(2026, 9, 14, 8, 0, tzinfo=KST)
+    assert bars[-1].ts == datetime(2026, 9, 14, 19, 59, tzinfo=KST)
+    assert all(a.ts < b.ts for a, b in zip(bars, bars[1:]))
+    assert len(fake.gets()) == 4
+    _, url, kwargs = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/candles"
+    assert kwargs["params"] == {"symbol": "005930", "interval": "1m", "count": 200,
+                                "before": "2026-09-14T23:59:59+09:00", "adjusted": "false"}
+
+
+@pytest.mark.parametrize("page", [
+    ok([candle(e) for e in reversed(session_ends(PREV_DAY)[-200:])], "2026-09-11T16:40:00+09:00"),
+    ok([], None),
+])
+def test_fetch_day_returns_empty_for_day_without_bars(tmp_path, page):
+    """첫 페이지가 전날 봉뿐이거나 비어 있으면 요청 1번으로 빈 목록을 반환한다."""
+    fake = FakeToss(on_get=lambda params: page)
+    assert make_client(tmp_path, fake).fetch_day("005930", DAY) == []
+    assert len(fake.gets()) == 1
+
+
+def test_fetch_day_raises_after_10_pages(tmp_path):
+    """10페이지를 받아도 멈춤 조건에 닿지 않으면 PAGINATION 예외를 낸다."""
+    end = datetime(2026, 9, 14, 12, 0, tzinfo=KST)
+    fake = FakeToss(on_get=lambda params: ok([candle(end)], end.isoformat()))
+    with pytest.raises(TossError) as e:
+        make_client(tmp_path, fake).fetch_day("005930", DAY)
+    assert e.value.code == "PAGINATION"
+    assert len(fake.gets()) == 10
+
+
+def test_fetch_day_rejects_body_without_candles(tmp_path):
+    """200 응답에 result.candles가 없으면 빈 날로 기록되지 않도록 BAD_RESPONSE 예외를 낸다."""
+    fake = FakeToss(on_get=lambda params: FakeResponse(None))
+    with pytest.raises(TossError) as e:
+        make_client(tmp_path, fake).fetch_day("005930", DAY)
+    assert e.value.code == "BAD_RESPONSE"

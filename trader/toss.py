@@ -1,16 +1,20 @@
-"""토스증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도."""
+"""토스증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도, 하루치 1분봉 조회."""
 import json
 import time as _time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import requests
 
-from bars import KST
+from bars import KST, Bar
 
 NETWORK_DELAYS = (1, 2, 4)
 RATE_LIMIT_RETRIES = 3
 REISSUE_CODES = {"expired-token", "token-revoked", "invalid-token"}
+CANDLES_PATH = "/api/v1/candles"
+PAGE_SIZE = 200
+MAX_PAGES = 10
 
 
 class TossError(Exception):
@@ -158,3 +162,32 @@ class TossClient:
                 network_tries += 1
                 continue
             raise TossError(code or f"HTTP{status}")
+
+    def fetch_day(self, symbol, day: date):
+        """day 하루치 1분봉을 최신순 페이지로 거꾸로 받아 봉 시작 시각 오름차순으로 반환한다."""
+        bars = {}
+        before = f"{day.isoformat()}T23:59:59+09:00"
+        for _ in range(MAX_PAGES):
+            body = self._get(CANDLES_PATH, {"symbol": symbol, "interval": "1m", "count": PAGE_SIZE,
+                                            "before": before, "adjusted": "false"})
+            try:
+                candles = body["result"]["candles"]
+                next_before = body["result"].get("nextBefore")
+            except (KeyError, TypeError, AttributeError):
+                raise TossError("BAD_RESPONSE") from None
+            reached_prev_day = False
+            for c in candles:
+                end = datetime.fromisoformat(c["timestamp"]).astimezone(KST)
+                if end.date() < day:
+                    reached_prev_day = True
+                elif end.date() == day:
+                    ts = end - timedelta(minutes=1)
+                    bars[ts] = Bar(ts, Decimal(c["openPrice"]), Decimal(c["highPrice"]),
+                                   Decimal(c["lowPrice"]), Decimal(c["closePrice"]),
+                                   int(Decimal(c["volume"])))
+            if reached_prev_day or not candles or not next_before:
+                break
+            before = next_before
+        else:
+            raise TossError("PAGINATION")
+        return [bars[ts] for ts in sorted(bars)]
