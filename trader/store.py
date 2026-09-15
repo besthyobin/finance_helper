@@ -1,0 +1,40 @@
+"""minute_bars·collect_runs 테이블 저장과 조회."""
+
+
+def save_bars(conn, symbol, bars):
+    """봉 목록을 한 트랜잭션으로 저장한다. 이미 있는 (symbol, ts)는 건너뛴다."""
+    with conn.transaction(), conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO minute_bars (symbol, ts, open, high, low, close, volume) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (symbol, ts) DO NOTHING",
+            [(symbol, b.ts, b.open, b.high, b.low, b.close, b.volume) for b in bars],
+        )
+
+
+def record_run(conn, symbol, trade_date, bar_count, status, error=None):
+    """종목·날짜별 수집 결과를 기록하고, 이미 있으면 최신 결과로 덮어쓴다."""
+    conn.execute(
+        "INSERT INTO collect_runs (symbol, trade_date, bar_count, status, error) "
+        "VALUES (%s, %s, %s, %s, %s) "
+        "ON CONFLICT (symbol, trade_date) DO UPDATE SET bar_count = EXCLUDED.bar_count, "
+        "status = EXCLUDED.status, error = EXCLUDED.error, collected_at = now()",
+        (symbol, trade_date, bar_count, status, error),
+    )
+
+
+def done_symbols(conn, trade_date):
+    """해당 날짜에 ok 또는 empty로 끝난 종목 집합을 반환한다."""
+    rows = conn.execute(
+        "SELECT symbol FROM collect_runs WHERE trade_date = %s AND status IN ('ok', 'empty')",
+        (trade_date,),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def failed_runs(conn, trade_date):
+    """해당 날짜 error 종목을 (symbol, error) 목록으로 종목코드 순으로 반환한다."""
+    return conn.execute(
+        "SELECT symbol, error FROM collect_runs "
+        "WHERE trade_date = %s AND status = 'error' ORDER BY symbol",
+        (trade_date,),
+    ).fetchall()
