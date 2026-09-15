@@ -115,3 +115,31 @@ def test_parse_args_rejects_non_numeric_cost():
     with pytest.raises(SystemExit) as e:
         backtest.parse_args(["--strategy", "orb", "--fee", "abc", *ARGS])
     assert e.value.code == 2
+
+
+def bar_at(hour, minute):
+    """2026-09-11 hour:minute 시작 봉을 만든다."""
+    p = Decimal(100)
+    return Bar(datetime(2026, 9, 11, hour, minute, tzinfo=KST), p, p, p, p, 100)
+
+
+def test_regular_session_keeps_0900_to_1529():
+    """정규장 필터는 09:00·15:29 봉을 남기고 08:30·15:30·16:00 봉과 남은 봉이 없는 종목은 뺀다."""
+    got = backtest.regular_session({
+        "A": [bar_at(8, 30), bar_at(9, 0), bar_at(15, 29), bar_at(15, 30), bar_at(16, 0)],
+        "B": [bar_at(8, 0)],
+    })
+    assert got == {"A": [bar_at(9, 0), bar_at(15, 29)]}
+
+
+def test_main_session_option(db_env, capsys):
+    """regular는 정규장 봉이 없는 종목을 빼고(전부 없으면 1), all은 전 종목을 쓰며 costs에 session을 남긴다."""
+    store.save_bars(db_env, "B", [bar_at(16, 0)], source="yahoo")
+    assert backtest.main(["--strategy", "orb", *ARGS]) == 1
+    assert "봉 데이터 없음" in capsys.readouterr().out
+
+    store.save_bars(db_env, "A", breakout_day(), source="yahoo")
+    assert backtest.main(["--strategy", "orb", *ARGS]) == 0
+    assert backtest.main(["--strategy", "orb", "--session", "all", *ARGS]) == 0
+    rows = db_env.execute("SELECT symbols, costs->>'session' FROM backtest_runs ORDER BY id").fetchall()
+    assert rows == [(["A"], "regular"), (["A", "B"], "all")]

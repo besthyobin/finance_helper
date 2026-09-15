@@ -15,6 +15,9 @@ from strategies import STRATEGIES
 
 ROOT = Path(__file__).resolve().parent
 
+REGULAR_OPEN = time(9, 0)
+REGULAR_CLOSE = time(15, 30)
+
 
 class UsageError(Exception):
     """잘못된 실행 인자."""
@@ -32,7 +35,7 @@ def parse_args(argv):
     """인자를 해석·검증해 (args, {전략이름: 최종 파라미터})를 반환한다. 잘못되면 UsageError."""
     p = argparse.ArgumentParser(description="분봉 백테스트")
     p.add_argument("--strategy", required=True, help="쉼표 구분 전략 이름: " + ", ".join(STRATEGIES))
-    p.add_argument("--source", required=True, help="minute_bars.source (kis, yahoo)")
+    p.add_argument("--source", required=True, help="minute_bars.source (toss, yahoo)")
     p.add_argument("--from", dest="date_from", required=True, type=date.fromisoformat)
     p.add_argument("--to", dest="date_to", required=True, type=date.fromisoformat)
     p.add_argument("--symbols", help="쉼표 구분 종목코드, 없으면 전 종목")
@@ -41,6 +44,8 @@ def parse_args(argv):
     p.add_argument("--tax", type=_decimal, default=Decimal("0.002"))
     p.add_argument("--slippage", type=_decimal, default=Decimal("0.0005"))
     p.add_argument("--exit-at", type=time.fromisoformat, default=time(15, 15))
+    p.add_argument("--session", choices=("regular", "all"), default="regular",
+                   help="regular: 09:00~15:29 시작 봉만, all: 저장된 봉 전부")
     args = p.parse_args(argv)
 
     names = args.strategy.split(",")
@@ -70,6 +75,16 @@ def parse_args(argv):
         except ValueError as e:
             raise UsageError(f"파라미터 값 오류: {e}") from None
     return args, params
+
+
+def regular_session(bars):
+    """종목별 봉에서 09:00~15:29 시작 봉만 남기고, 남은 봉이 없는 종목은 뺀다."""
+    out = {}
+    for symbol, symbol_bars in bars.items():
+        kept = [b for b in symbol_bars if REGULAR_OPEN <= b.ts.time() < REGULAR_CLOSE]
+        if kept:
+            out[symbol] = kept
+    return out
 
 
 def summarize(trades):
@@ -115,8 +130,10 @@ def main(argv=None):
     symbols = args.symbols.split(",") if args.symbols else None
     try:
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
-            # ponytail: 기간 전체 봉을 한 번에 메모리에 올림(1년×50종목≈470만 봉, 수 GB). 수개월 이상 KIS 데이터로 돌리기 전에 종목별로 조회·실행하도록 바꿀 것
+            # ponytail: 기간 전체 봉을 한 번에 메모리에 올림(1년×50종목≈470만 봉, 수 GB). 수개월 이상 토스 데이터로 돌리기 전에 종목별로 조회·실행하도록 바꿀 것
             bars = store.load_bars(conn, args.source, args.date_from, args.date_to, symbols)
+            if args.session == "regular":
+                bars = regular_session(bars)
             if not bars:
                 print("봉 데이터 없음")
                 return 1
@@ -127,7 +144,8 @@ def main(argv=None):
                     "symbols": sorted(bars), "date_from": args.date_from, "date_to": args.date_to,
                     "costs": {"fee": str(args.fee), "tax": str(args.tax),
                               "slippage": str(args.slippage),
-                              "exit_at": args.exit_at.strftime("%H:%M")},
+                              "exit_at": args.exit_at.strftime("%H:%M"),
+                              "session": args.session},
                 }, trades)
                 print(format_summary(run_id, name, p, len(bars), args, summarize(trades)))
     except Exception as e:
