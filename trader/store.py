@@ -1,14 +1,32 @@
-"""minute_bars·collect_runs 테이블 저장과 조회."""
+"""minute_bars·collect_runs·backtest 테이블 저장과 조회."""
+from datetime import datetime, time, timedelta
+
+from kis import KST, Bar
 
 
-def save_bars(conn, symbol, bars):
-    """봉 목록을 한 트랜잭션으로 저장한다. 이미 있는 (symbol, ts)는 건너뛴다."""
+def save_bars(conn, symbol, bars, source="kis"):
+    """봉 목록을 한 트랜잭션으로 저장한다. 이미 있는 (source, symbol, ts)는 건너뛴다."""
     with conn.transaction(), conn.cursor() as cur:
         cur.executemany(
-            "INSERT INTO minute_bars (symbol, ts, open, high, low, close, volume) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (symbol, ts) DO NOTHING",
-            [(symbol, b.ts, b.open, b.high, b.low, b.close, b.volume) for b in bars],
+            "INSERT INTO minute_bars (source, symbol, ts, open, high, low, close, volume) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (source, symbol, ts) DO NOTHING",
+            [(source, symbol, b.ts, b.open, b.high, b.low, b.close, b.volume) for b in bars],
         )
+
+
+def load_bars(conn, source, date_from, date_to, symbols=None):
+    """source·KST 기간(양끝 포함)·종목으로 봉을 조회해 {종목: 시각 오름차순 Bar 목록}으로 반환한다."""
+    sql = ("SELECT symbol, ts, open, high, low, close, volume FROM minute_bars "
+           "WHERE source = %s AND ts >= %s AND ts < %s")
+    args = [source, datetime.combine(date_from, time(0), KST),
+            datetime.combine(date_to + timedelta(days=1), time(0), KST)]
+    if symbols:
+        sql += " AND symbol = ANY(%s)"
+        args.append(list(symbols))
+    bars = {}
+    for symbol, ts, o, h, l, c, v in conn.execute(sql + " ORDER BY symbol, ts", args):
+        bars.setdefault(symbol, []).append(Bar(ts.astimezone(KST), o, h, l, c, v))
+    return bars
 
 
 def record_run(conn, symbol, trade_date, bar_count, status, error=None):

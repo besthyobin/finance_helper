@@ -1,10 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import store
 from kis import KST, Bar
 
 TODAY = date(2026, 9, 14)
+SCHEMA = (Path(__file__).resolve().parents[1] / "schema.sql").read_text(encoding="utf-8")
 
 
 def bar(hour, minute, close="70000"):
@@ -60,3 +62,52 @@ def test_failed_runs_lists_errors_sorted(conn):
     store.record_run(conn, "A", TODAY, 0, "error", "a오류")
     store.record_run(conn, "C", TODAY, 382, "ok")
     assert store.failed_runs(conn, TODAY) == [("A", "a오류"), ("B", "b오류")]
+
+
+def bar_ts(ts, close="70000"):
+    """주어진 시각의 테스트용 봉을 만든다."""
+    p = Decimal(close)
+    return Bar(ts, p, p, p, p, 100)
+
+
+def test_schema_migrates_old_minute_bars(conn):
+    """source 없는 수집기 버전 테이블에 schema.sql을 두 번 적용해도 데이터가 source='kis'로 보존된다."""
+    conn.execute("DROP TABLE minute_bars")
+    conn.execute(
+        "CREATE TABLE minute_bars (symbol text NOT NULL, ts timestamptz NOT NULL, "
+        "open numeric NOT NULL, high numeric NOT NULL, low numeric NOT NULL, "
+        "close numeric NOT NULL, volume bigint NOT NULL, PRIMARY KEY (symbol, ts))"
+    )
+    conn.execute("INSERT INTO minute_bars VALUES ('005930', '2026-09-11 09:00+09', 1, 1, 1, 1, 1)")
+    conn.execute(SCHEMA)
+    conn.execute(SCHEMA)
+    assert conn.execute("SELECT source, symbol FROM minute_bars").fetchall() == [("kis", "005930")]
+    pk = conn.execute(
+        "SELECT a.attname FROM pg_index i JOIN pg_attribute a "
+        "ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+        "WHERE i.indrelid = 'minute_bars'::regclass AND i.indisprimary"
+    ).fetchall()
+    assert {r[0] for r in pk} == {"source", "symbol", "ts"}
+
+
+def test_save_bars_separates_sources(conn):
+    """같은 종목·시각이라도 source가 다르면 따로 저장된다."""
+    b = bar_ts(datetime(2026, 9, 11, 9, 0, tzinfo=KST))
+    store.save_bars(conn, "005930", [b])
+    store.save_bars(conn, "005930", [b], source="yahoo")
+    rows = conn.execute("SELECT source FROM minute_bars ORDER BY source").fetchall()
+    assert rows == [("kis",), ("yahoo",)]
+
+
+def test_load_bars_filters_source_dates_symbols(conn):
+    """source·KST 날짜 경계·종목으로 걸러 종목별 시각 오름차순으로 돌려준다."""
+    inside = [datetime(2026, 9, 11, 0, 30, tzinfo=KST), datetime(2026, 9, 11, 9, 0, tzinfo=KST)]
+    store.save_bars(conn, "A", [bar_ts(t) for t in reversed(inside)], source="yahoo")
+    store.save_bars(conn, "A", [bar_ts(datetime(2026, 9, 12, 0, 0, tzinfo=KST))], source="yahoo")
+    store.save_bars(conn, "B", [bar_ts(inside[1])], source="yahoo")
+    store.save_bars(conn, "C", [bar_ts(inside[1])], source="kis")
+
+    got = store.load_bars(conn, "yahoo", date(2026, 9, 11), date(2026, 9, 11))
+    assert {s: [b.ts for b in bars] for s, bars in got.items()} == {"A": inside, "B": [inside[1]]}
+    assert got["A"][0].ts.utcoffset() == KST.utcoffset(None)
+    assert list(store.load_bars(conn, "yahoo", date(2026, 9, 11), date(2026, 9, 11), ["B"])) == ["B"]
