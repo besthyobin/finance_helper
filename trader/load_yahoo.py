@@ -74,7 +74,7 @@ def main(argv=None, send=requests.get, today=None):
                     failed += 1
                     print(f"{code} 실패: {type(e).__name__}")
     except Exception as e:
-        print(f"실행 실패: {type(e).__name__} {e}")
+        print(f"실행 실패: {type(e).__name__}")
         return 1
     return 1 if failed else 0
 

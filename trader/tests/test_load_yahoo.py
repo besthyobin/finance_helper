@@ -75,3 +75,12 @@ def test_main_returns_0_when_all_succeed(conn, monkeypatch):
     """전 종목 성공이면 0을 반환한다."""
     monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
     assert load_yahoo.main(["005930"], send=fake_yahoo({"005930.KS"}), today=TODAY) == 0
+
+
+def test_main_hides_connection_string_on_db_failure(monkeypatch, capsys):
+    """DB 접속 실패 시 예외 종류만 출력하고 접속 문자열(비밀번호)은 출력하지 않는다."""
+    monkeypatch.setenv("DATABASE_URL", "SECRETPW")
+    assert load_yahoo.main(["005930"], send=fake_yahoo({"005930.KS"}), today=TODAY) == 1
+    out = capsys.readouterr().out
+    assert "실행 실패: ProgrammingError" in out
+    assert "SECRETPW" not in out
