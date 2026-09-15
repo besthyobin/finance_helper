@@ -17,6 +17,7 @@ class TossError(Exception):
     """토스 호출 실패. code에 토스 error.code 또는 NETWORK·HTTP<status>·PAGINATION·BAD_RESPONSE를 담는다."""
 
     def __init__(self, code, detail=""):
+        """오류 코드와 부가 정보로 예외를 만든다."""
         super().__init__(f"{code} {detail}".strip())
         self.code = code
 
