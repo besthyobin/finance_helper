@@ -1,14 +1,14 @@
 """한국투자증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도."""
 import json
 import time as _time
-from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import requests
 
-KST = timezone(timedelta(hours=9))
+from bars import KST, Bar
+
 NETWORK_DELAYS = (1, 2, 4)
 RATE_LIMIT_RETRIES = 3
 MINUTE_CHART_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
@@ -16,17 +16,6 @@ MINUTE_CHART_TR_ID = "FHKST03010200"
 MARKET_CLOSE = "153000"
 MARKET_OPEN = "090000"
 MAX_PAGES = 20
-
-
-@dataclass(frozen=True)
-class Bar:
-    """1분봉 한 개. ts는 KST 봉 시각."""
-    ts: datetime
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-    volume: int
 
 
 def _to_bar(row, today):

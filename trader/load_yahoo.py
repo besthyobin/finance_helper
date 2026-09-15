@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 import store
 from collector import read_symbols
-from kis import KST, Bar
+from bars import KST, Bar
 
 ROOT = Path(__file__).resolve().parent
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}"

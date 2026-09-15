@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from kis import KST, Bar
+from bars import KST, Bar
 from strategies import STRATEGIES, MaCross, Orb
 
 

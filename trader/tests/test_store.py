@@ -7,7 +7,7 @@ import pytest
 
 import engine
 import store
-from kis import KST, Bar
+from bars import KST, Bar
 
 TODAY = date(2026, 9, 14)
 SCHEMA = (Path(__file__).resolve().parents[1] / "schema.sql").read_text(encoding="utf-8")

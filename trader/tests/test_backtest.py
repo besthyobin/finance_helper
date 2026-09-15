@@ -6,7 +6,7 @@ import pytest
 
 import backtest
 import store
-from kis import KST, Bar
+from bars import KST, Bar
 
 ARGS = ["--source", "yahoo", "--from", "2026-09-11", "--to", "2026-09-11"]
 

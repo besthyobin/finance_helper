@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import load_yahoo
-from kis import KST, Bar
+from bars import KST, Bar
 
 TODAY = date(2026, 9, 15)
 CHART = json.loads((Path(__file__).parent / "fixtures" / "yahoo_chart.json").read_text(encoding="utf-8"))

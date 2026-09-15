@@ -3,7 +3,7 @@ from datetime import datetime, time, timedelta
 
 from psycopg.types.json import Jsonb
 
-from kis import KST, Bar
+from bars import KST, Bar
 
 
 def save_bars(conn, symbol, bars, source="kis"):

@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 import engine
-from kis import KST, Bar
+from bars import KST, Bar
 
 NO_COST = engine.Costs(Decimal(0), Decimal(0), Decimal(0), time(15, 15))
 
