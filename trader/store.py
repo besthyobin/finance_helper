@@ -61,19 +61,10 @@ def record_run(conn, symbol, trade_date, bar_count, status, error=None):
     )
 
 
-def done_symbols(conn, trade_date):
-    """해당 날짜에 ok 또는 empty로 끝난 종목 집합을 반환한다."""
+def done_days(conn, symbol):
+    """해당 종목에서 ok 또는 empty로 끝난 날짜 집합을 반환한다."""
     rows = conn.execute(
-        "SELECT symbol FROM collect_runs WHERE trade_date = %s AND status IN ('ok', 'empty')",
-        (trade_date,),
+        "SELECT trade_date FROM collect_runs WHERE symbol = %s AND status IN ('ok', 'empty')",
+        (symbol,),
     ).fetchall()
     return {r[0] for r in rows}
-
-
-def failed_runs(conn, trade_date):
-    """해당 날짜 error 종목을 (symbol, error) 목록으로 종목코드 순으로 반환한다."""
-    return conn.execute(
-        "SELECT symbol, error FROM collect_runs "
-        "WHERE trade_date = %s AND status = 'error' ORDER BY symbol",
-        (trade_date,),
-    ).fetchall()

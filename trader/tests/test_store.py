@@ -51,21 +51,13 @@ def test_record_run_overwrites_same_day(conn):
     assert rows == [(382, "ok", None)]
 
 
-def test_done_symbols_includes_ok_and_empty_only(conn):
-    """완료 종목은 ok·empty만이고 error와 다른 날짜는 제외한다."""
-    store.record_run(conn, "A", TODAY, 382, "ok")
-    store.record_run(conn, "B", TODAY, 0, "empty")
-    store.record_run(conn, "C", TODAY, 0, "error", "x")
-    store.record_run(conn, "D", date(2026, 9, 11), 382, "ok")
-    assert store.done_symbols(conn, TODAY) == {"A", "B"}
-
-
-def test_failed_runs_lists_errors_sorted(conn):
-    """오늘 error 종목을 종목코드 순으로 오류 메시지와 함께 반환한다."""
-    store.record_run(conn, "B", TODAY, 0, "error", "b오류")
-    store.record_run(conn, "A", TODAY, 0, "error", "a오류")
-    store.record_run(conn, "C", TODAY, 382, "ok")
-    assert store.failed_runs(conn, TODAY) == [("A", "a오류"), ("B", "b오류")]
+def test_done_days_includes_ok_and_empty_only(conn):
+    """완료 날짜는 해당 종목의 ok·empty만이고 error와 다른 종목은 제외한다."""
+    store.record_run(conn, "A", TODAY, 720, "ok")
+    store.record_run(conn, "A", date(2026, 9, 11), 0, "empty")
+    store.record_run(conn, "A", date(2026, 9, 10), 0, "error", "x")
+    store.record_run(conn, "B", date(2026, 9, 9), 720, "ok")
+    assert store.done_days(conn, "A") == {TODAY, date(2026, 9, 11)}
 
 
 def bar_ts(ts, close="70000"):

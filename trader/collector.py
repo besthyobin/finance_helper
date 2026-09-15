@@ -1,8 +1,8 @@
-"""KIS 당일 1분봉 수집기 진입점. 작업 스케줄러가 평일 16:00~23:00 매시 실행한다."""
+"""토스증권 1분봉 수집기 진입점. 작업 스케줄러가 평일 20:30에 실행하고, 첫 백필은 수동 실행한다."""
 import logging
 import os
 import sys
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import psycopg
@@ -10,20 +10,17 @@ from dotenv import load_dotenv
 
 import notify
 import store
-from kis import KST, KisClient
+from bars import KST
+from toss import TossAuthError, TossClient, TossError
 
 ROOT = Path(__file__).resolve().parent
-START_AFTER = time(15, 35)
-FINAL_RUN_FROM = time(23, 0)
-REQUIRED_ENV = ("KIS_APP_KEY", "KIS_APP_SECRET", "DATABASE_URL")
+HISTORY_DAYS = 1461
+TODAY_FROM = time(20, 10)
+MAX_CONSECUTIVE_ERRORS = 5
 MAX_ALERT_LINES = 20
+REQUIRED_ENV = ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET", "DATABASE_URL")
 
 log = logging.getLogger("collector")
-
-
-def should_run(now):
-    """평일 15:35 이후에만 수집한다. 자정 이후 밀린 실행이 장 전 빈 응답을 기록하는 것을 막는다."""
-    return now.weekday() < 5 and now.time() >= START_AFTER
 
 
 def read_symbols(path):
@@ -36,49 +33,58 @@ def read_symbols(path):
     return codes
 
 
-def collect(conn, client, symbols, today):
-    """오늘 완료되지 않은 종목만 수집·기록하고 상태별 개수를 반환한다."""
-    done = store.done_symbols(conn, today)
-    counts = {"ok": 0, "empty": 0, "error": 0, "skipped": 0}
+def target_days(now):
+    """실행일 1461일 전부터 어제까지의 평일과, 20:10 이후면 오늘(평일일 때)을 최신순으로 반환한다."""
+    today = now.date()
+    first = today - timedelta(days=HISTORY_DAYS)
+    last = today if now.time() >= TODAY_FROM else today - timedelta(days=1)
+    days = (last - timedelta(days=i) for i in range((last - first).days + 1))
+    return [d for d in days if d.weekday() < 5]
+
+
+def collect(conn, client, symbols, days):
+    """종목마다 완료되지 않은 날짜를 최신순으로 수집·기록하고 (종목별 상태 개수, 실패 목록)을 반환한다."""
+    counts, failures = {}, []
     for symbol in symbols:
-        if symbol in done:
-            counts["skipped"] += 1
-            continue
-        try:
-            bars = client.fetch_minute_bars(symbol, today)
+        done = store.done_days(conn, symbol)
+        todo = [d for d in days if d not in done]
+        c = counts[symbol] = {"ok": 0, "empty": 0, "error": 0, "skipped": 0}
+        streak = 0
+        for i, day in enumerate(todo):
+            if streak >= MAX_CONSECUTIVE_ERRORS:
+                c["skipped"] = len(todo) - i
+                log.error("%s 연속 오류 %d회, 남은 %d일 건너뜀", symbol, streak, c["skipped"])
+                break
+            try:
+                bars = client.fetch_day(symbol, day)
+            except TossAuthError:
+                raise
+            except Exception as e:
+                store.record_run(conn, symbol, day, 0, "error", str(e))
+                failures.append((symbol, day, str(e)))
+                c["error"] += 1
+                streak += 1
+                log.error("%s %s error %s", symbol, day, e)
+                continue
             if bars:
-                store.save_bars(conn, symbol, bars)
-                status = "ok"
-            else:
-                status = "empty"
-            store.record_run(conn, symbol, today, len(bars), status)
-            log.info("%s %s %d", symbol, status, len(bars))
-        except Exception as e:
-            store.record_run(conn, symbol, today, 0, "error", str(e))
-            status = "error"
-            log.error("%s error %s", symbol, e)
-        counts[status] += 1
-    return counts
+                store.save_bars(conn, symbol, bars, source="toss")
+            status = "ok" if bars else "empty"
+            store.record_run(conn, symbol, day, len(bars), status)
+            c[status] += 1
+            streak = 0
+            log.info("%s %s %s %d", symbol, day, status, len(bars))
+        log.info("%s ok %d / empty %d / error %d / skipped %d",
+                 symbol, c["ok"], c["empty"], c["error"], c["skipped"])
+    return counts, failures
 
 
-def format_alert(today, failed):
-    """실패 종목 알림 문구를 만든다. 최대 20줄, 나머지는 개수만 적는다."""
-    lines = [f"[수집기] {today} 실패 {len(failed)}종목"]
-    lines += [f"{symbol}: {error}" for symbol, error in failed[:MAX_ALERT_LINES]]
-    if len(failed) > MAX_ALERT_LINES:
-        lines.append(f"외 {len(failed) - MAX_ALERT_LINES}종목")
+def format_alert(run_date, failures):
+    """실패 날짜 알림 문구를 만든다. 최대 20줄, 나머지는 개수만 적는다."""
+    lines = [f"[수집기] {run_date} 실패 {len(failures)}건"]
+    lines += [f"{symbol} {day}: {error}" for symbol, day, error in failures[:MAX_ALERT_LINES]]
+    if len(failures) > MAX_ALERT_LINES:
+        lines.append(f"외 {len(failures) - MAX_ALERT_LINES}건")
     return "\n".join(lines)
-
-
-def alert_failures(conn, now, send=notify.send_telegram):
-    """23:00 이후 실행에서 오늘 실패 종목이 남아 있으면 알림을 보내고 True를 반환한다."""
-    if now.time() < FINAL_RUN_FROM:
-        return False
-    failed = store.failed_runs(conn, now.date())
-    if not failed:
-        return False
-    send(format_alert(now.date(), failed))
-    return True
 
 
 def setup_logging(today):
@@ -93,32 +99,32 @@ def setup_logging(today):
 
 
 def main(now=None):
-    """수집 1회 실행. 종목 단위 오류만 있으면 0, 설정·DB·토큰 등 실행 전체 실패면 1을 반환한다."""
+    """수집 1회 실행. 날짜 단위 오류만 있으면 0, 설정·DB·인증 등 실행 전체 실패면 1을 반환한다."""
     now = now or datetime.now(KST)
     load_dotenv(ROOT / ".env")
     setup_logging(now.date())
-    if not should_run(now):
-        log.info("수집 시간이 아님: %s", now.isoformat())
-        return 0
     try:
         missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
         if missing:
-            raise RuntimeError(f".env 누락: {', '.join(missing)}")
-        client = KisClient(
-            os.environ["KIS_APP_KEY"], os.environ["KIS_APP_SECRET"],
-            os.environ.get("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443"),
-            float(os.environ.get("KIS_RPS", "15")), ROOT / ".token.json",
+            log.error(".env 누락: %s", ", ".join(missing))
+            raise RuntimeError("missing env")
+        client = TossClient(
+            os.environ["TOSS_CLIENT_ID"], os.environ["TOSS_CLIENT_SECRET"],
+            os.environ.get("TOSS_BASE_URL") or "https://openapi.tossinvest.com",
+            float(os.environ.get("TOSS_RPS") or "15"), ROOT / ".token.json",
         )
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
             client.get_token()
-            counts = collect(conn, client, read_symbols(ROOT / "symbols.txt"), now.date())
-            log.info("요약 ok %(ok)d / empty %(empty)d / error %(error)d / skipped %(skipped)d", counts)
-            alert_failures(conn, now)
+            counts, failures = collect(conn, client, read_symbols(ROOT / "symbols.txt"), target_days(now))
     except Exception as e:
-        log.error("실행 실패: %s %s", type(e).__name__, e)
-        if now.time() >= FINAL_RUN_FROM:
-            notify.send_telegram(f"[수집기] {now.date()} 실행 실패: {type(e).__name__}")
+        # 예외 문자열에 접속 문자열 등이 섞일 수 있어 종류와 토스 오류 코드만 남긴다
+        log.error("실행 실패: %s %s", type(e).__name__, e.code if isinstance(e, TossError) else "")
+        notify.send_telegram(f"[수집기] {now.date()} 실행 실패: {type(e).__name__}")
         return 1
+    total = {k: sum(c[k] for c in counts.values()) for k in ("ok", "empty", "error", "skipped")}
+    log.info("요약 ok %(ok)d / empty %(empty)d / error %(error)d / skipped %(skipped)d", total)
+    if failures:
+        notify.send_telegram(format_alert(now.date(), failures))
     return 0
 
 

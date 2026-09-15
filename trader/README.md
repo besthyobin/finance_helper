@@ -1,7 +1,7 @@
-# KIS 1분봉 수집기
+# 토스증권 1분봉 수집기와 백테스터
 
-평일 장 마감 후 `symbols.txt` 종목의 당일 1분봉을 한국투자증권 Open API에서 받아 PostgreSQL에 저장한다.
-설계: `docs/superpowers/specs/2026-09-14-kis-minute-collector-design.md`
+`symbols.txt` 종목의 1분봉을 토스증권 Open API에서 받아 PostgreSQL에 저장하고, 저장한 봉으로 전략을 백테스트한다.
+설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`
 
 ## 설치
 
@@ -20,41 +20,68 @@
    ```
 
 3. `.env.example`을 `.env`로 복사해 값 입력
-   - `KIS_APP_KEY`, `KIS_APP_SECRET`: KIS Developers에서 발급한 **실전** 앱키 (시세 조회만 사용)
+   - `TOSS_CLIENT_ID`, `TOSS_CLIENT_SECRET`: 토스증권 WTS 설정 > Open API에서 발급 (시세 조회만 사용)
+   - 같은 메뉴 하단 **허용 IP 관리**에 이 PC의 공인 IP를 등록한다. 없으면 403 `access_denied`로 실행 실패
+   - `TOSS_RPS`: 초당 호출 수. 차트 API 한도(초당 20회)보다 낮게 둔다. 기본 15
    - `TELEGRAM_BOT_TOKEN`: BotFather로 만든 봇 토큰
    - `TELEGRAM_CHAT_ID`: 봇에게 메시지를 보낸 뒤 `https://api.telegram.org/bot<토큰>/getUpdates`의 `chat.id`
 
 4. 테스트: `.\.venv\Scripts\python -m pytest tests -v`
 
-## 작업 스케줄러 등록
-
-평일 16:00부터 1시간마다 23:00까지 실행한다. 관리자 PowerShell에서 `trader` 폴더 기준으로 실행:
-
-```powershell
-$dir = (Get-Location).Path
-$action = New-ScheduledTaskAction -Execute "$dir\.venv\Scripts\python.exe" -Argument "collector.py" -WorkingDirectory $dir
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 16:00
-$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At 16:00 -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Hours 7)).Repetition
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 50)
-Register-ScheduledTask -TaskName "KIS 분봉 수집기" -Action $action -Trigger $trigger -Settings $settings
-```
-
-- 평일 장 마감 후 23:00 전까지 PC가 켜져 있어야 한다. 당일분봉은 다음 날 다시 받을 수 없다.
-- 로그: `logs/collector-YYYY-MM-DD.log`
-
 ## 운영 DB 스키마 갱신
 
-백테스터 추가로 `minute_bars`에 `source` 컬럼과 결과 테이블이 생겼다. 기존 데이터는 `source='kis'`로 보존된다.
+`minute_bars.source` 컬럼과 백테스트 결과 테이블이 필요하다. 수집기를 처음 실행하기 전에 적용한다(여러 번 적용해도 안전, 기존 데이터 보존).
 
 ```powershell
 D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U trader -d trader -v ON_ERROR_STOP=1 -f schema.sql
 ```
 
-코드 갱신 직후, 수집기 다음 실행(평일 16:00~23:00) 전에 적용한다. 적용 전에는 수집기가 모든 종목을 error로 기록한다(당일분봉은 다음 날 복구 불가). 적용 후 확인: SELECT source, count(*) FROM minute_bars GROUP BY 1;
+확인: `SELECT source, count(*) FROM minute_bars GROUP BY 1;`
+
+## 수집기
+
+```powershell
+.\.venv\Scripts\python collector.py
+```
+
+한 번 실행하면 종목마다 최근 1461일(약 4년)의 평일 중 `collect_runs`에 `ok`·`empty`가 없는 날짜를 최신 날짜부터 받는다. 20:10 이후 실행이면 오늘도 포함한다.
+
+- 저장: `minute_bars.source='toss'`, 받은 봉 전부(08:00~19:59). NXT 미거래 종목은 09:00~15:29만 오고, NXT 출범 전 날짜는 확장 시간이 거래량 0인 채움 봉이다. `ts`는 봉 시작 시각, 가격은 수정주가 미적용 원래 체결가
+- 기록: 종목·날짜마다 `collect_runs`에 `ok`(봉 수) / `empty`(휴장일, 상장 전 등) / `error`. `error` 날짜는 다음 실행에서 다시 받는다
+- 한 종목에서 오류가 5번 연속 나면 이번 실행에서는 그 종목의 남은 날짜를 건너뛴다
+- 날짜 오류가 있으면 실행 끝에 텔레그램 알림 1통을 보낸다. 인증·DB·설정 오류로 실행 전체가 실패하면 실행 실패 알림을 보내고 종료 코드 1
+- 첫 백필은 종목당 약 4분(50종목 3~4시간)이다. 작업 스케줄러 등록 전에 수동으로 한 번 실행한다
+- 동시에 두 개를 실행하지 않는다. 수동 실행은 스케줄 시각(20:30)을 피한다
+- 로그: `logs/collector-YYYY-MM-DD.log`
+
+## 작업 스케줄러 등록
+
+평일 20:30에 1회 실행한다(NXT 마감 20:00 이후 당일 완성본). PC가 꺼져 있어 놓친 날은 다음 실행이 채운다. 관리자 PowerShell에서 `trader` 폴더 기준으로 실행:
+
+```powershell
+$dir = (Get-Location).Path
+$action = New-ScheduledTaskAction -Execute "$dir\.venv\Scripts\python.exe" -Argument "collector.py" -WorkingDirectory $dir
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 20:30
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 6)
+Register-ScheduledTask -TaskName "토스 분봉 수집기" -Action $action -Trigger $trigger -Settings $settings
+```
+
+예전에 `KIS 분봉 수집기` 작업을 등록했다면 지운다: `Unregister-ScheduledTask -TaskName "KIS 분봉 수집기" -Confirm:$false`
+
+## 누락 확인
+
+```sql
+SELECT trade_date, symbol, status, bar_count, error
+FROM collect_runs
+WHERE status = 'error' OR (status = 'ok' AND bar_count < 390)
+ORDER BY trade_date DESC, symbol;
+```
+
+정상 거래일 봉 수는 NXT 거래 종목 720, 정규장만 거래하는 종목 390이다. 수능일·연초 개장일 같은 단축 거래일은 더 적을 수 있다.
 
 ## Yahoo 임시 데이터 적재
 
-KIS 데이터가 쌓이기 전 개발·검증용. 최근 약 7거래일, 하루 360봉(09:00~14:59, 15시 이후 봉 없음). 비공식 API라 언제든 막힐 수 있다.
+토스 데이터가 쌓이기 전 개발·검증용. 최근 약 7거래일, 하루 360봉(09:00~14:59, 15시 이후 봉 없음). 비공식 API라 언제든 막힐 수 있다.
 
 ```powershell
 .\.venv\Scripts\python load_yahoo.py              # symbols.txt 전 종목
@@ -64,13 +91,13 @@ KIS 데이터가 쌓이기 전 개발·검증용. 최근 약 7거래일, 하루 
 ## 백테스트
 
 ```powershell
-.\.venv\Scripts\python backtest.py --strategy ma_cross,orb --source yahoo --from 2026-09-04 --to 2026-09-14
+.\.venv\Scripts\python backtest.py --strategy ma_cross,orb --source toss --from 2026-08-17 --to 2026-09-14
 ```
 
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
 | `--strategy` | (필수) | 쉼표 구분. 전략마다 실행 1건 저장 |
-| `--source` | (필수) | `kis` 또는 `yahoo` |
+| `--source` | (필수) | `toss` 또는 `yahoo` |
 | `--from`, `--to` | (필수) | KST 날짜, 양끝 포함 |
 | `--symbols` | 전 종목 | 쉼표 구분 종목코드 |
 | `--param key=value` | 전략 기본값 | 여러 번 지정. 그 키를 가진 전략에만 적용 |
@@ -99,20 +126,13 @@ GROUP BY 1, 2
 ORDER BY 1, 2;
 ```
 
-## 누락 확인
+## 첫 실행 수동 검증 (1회)
 
-```sql
-SELECT trade_date, symbol, status, bar_count, error
-FROM collect_runs
-WHERE status <> 'ok' OR bar_count < 300
-ORDER BY trade_date DESC, symbol;
-```
-
-## 키 발급 후 수동 검증 (1회)
-
-1. `symbols.txt`를 005930, 000660 두 종목으로 두고 평일 15:35 이후 `.\.venv\Scripts\python collector.py` 실행
-2. 종목당 약 381개 저장 확인: `SELECT symbol, count(*) FROM minute_bars WHERE source = 'kis' GROUP BY symbol;`
-3. 임의 봉 3개를 HTS/MTS 1분 차트와 시가·고가·저가·종가·거래량 대조
-4. 응답 필드명, 오류 코드(`EGW00123`, `EGW00133`, `EGW00201`), 호출 한도, 주식일별분봉조회 API 사용 가능 여부가 설계와 다르면 스펙과 코드 수정
-5. 작업 스케줄러 등록 후 하루 동안 두 번째 실행부터 `skipped`만 나오는지 로그 확인
-6. 5영업일 연속 `collect_runs`에 전 종목 `ok`(공휴일은 `empty`) 확인
+1. 위 "운영 DB 스키마 갱신" 적용
+2. 토스 허용 IP 등록 확인, `.env`에 `TOSS_*` 값 확인. 예전 KIS 토큰 캐시 `.token.json`이 있으면 지운다
+3. `symbols.txt`를 005930, 000660 두 종목으로 두고 `.\.venv\Scripts\python collector.py` (약 8분)
+4. `SELECT trade_date, status, bar_count FROM collect_runs WHERE symbol='005930' ORDER BY trade_date DESC LIMIT 10;` — 최근 거래일 720, 주말 행 없음, 휴장일 `empty`
+5. 임의 봉 3개를 토스 앱 1분 차트와 시가·고가·저가·종가·거래량 대조. 앱에서 `09:01`로 보이는 봉이 DB의 `09:00` 봉이어야 한다
+6. 곧바로 다시 실행 → 받을 날짜 0개(20:10 이후면 오늘 1개 이하)
+7. `.\.venv\Scripts\python backtest.py --strategy ma_cross,orb --source toss --from <1개월 전> --to <어제>` 결과 확인
+8. 작업 스케줄러 등록 후 다음 영업일 로그 확인, 5영업일 연속 실패 알림 없음
