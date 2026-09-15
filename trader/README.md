@@ -42,6 +42,61 @@ Register-ScheduledTask -TaskName "KIS 분봉 수집기" -Action $action -Trigger
 - 평일 장 마감 후 23:00 전까지 PC가 켜져 있어야 한다. 당일분봉은 다음 날 다시 받을 수 없다.
 - 로그: `logs/collector-YYYY-MM-DD.log`
 
+## 운영 DB 스키마 갱신
+
+백테스터 추가로 `minute_bars`에 `source` 컬럼과 결과 테이블이 생겼다. 기존 데이터는 `source='kis'`로 보존된다.
+
+```powershell
+D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U trader -d trader -f schema.sql
+```
+
+## Yahoo 임시 데이터 적재
+
+KIS 데이터가 쌓이기 전 개발·검증용. 최근 약 7거래일, 하루 360봉(09:00~14:59, 15시 이후 봉 없음). 비공식 API라 언제든 막힐 수 있다.
+
+```powershell
+.\.venv\Scripts\python load_yahoo.py              # symbols.txt 전 종목
+.\.venv\Scripts\python load_yahoo.py 005930 000660
+```
+
+## 백테스트
+
+```powershell
+.\.venv\Scripts\python backtest.py --strategy ma_cross,orb --source yahoo --from 2026-09-04 --to 2026-09-14
+```
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--strategy` | (필수) | 쉼표 구분. 전략마다 실행 1건 저장 |
+| `--source` | (필수) | `kis` 또는 `yahoo` |
+| `--from`, `--to` | (필수) | KST 날짜, 양끝 포함 |
+| `--symbols` | 전 종목 | 쉼표 구분 종목코드 |
+| `--param key=value` | 전략 기본값 | 여러 번 지정. 그 키를 가진 전략에만 적용 |
+| `--fee` | 0.00015 | 매수·매도 각각 |
+| `--tax` | 0.002 | 매도 거래세 (실제 세율 확인 필요) |
+| `--slippage` | 0.0005 | 매수가↑·매도가↓ |
+| `--exit-at` | 15:15 | 이후 진입 금지, 보유분 그 봉 시가에 청산 |
+
+전략 (`strategies.py`):
+- `ma_cross` (`short=5`, `long=20`): 종가 단기 이동평균이 장기를 상향 돌파하면 매수, 하향 돌파하면 매도
+- `orb` (`range_end=09:30`, `stop_pct=-1.0`, `target_pct=2.0`): 범위 시간 고가를 종가로 돌파하면 하루 1회 매수, 손절·목표 도달 시 매도
+
+체결 규칙: 신호 다음 봉 시가 체결, 매수만, 종목당 1포지션, 장 마감 전 강제 청산(데이터가 먼저 끝나면 마지막 봉 종가).
+
+새 전략 추가: `Strategy`를 상속해 `name`, `defaults`, `on_bar(bar, entry_price)`를 구현하고 `STRATEGIES`에 등록.
+
+결과 조회 예 (일별·시간대별):
+
+```sql
+SELECT (entry_ts AT TIME ZONE 'Asia/Seoul')::date AS day,
+       CASE WHEN (entry_ts AT TIME ZONE 'Asia/Seoul')::time < '12:00' THEN '09-12' ELSE '12-15' END AS slot,
+       count(*) AS trades, avg(return_pct) AS avg_ret, sum(return_pct) AS sum_ret
+FROM backtest_trades
+WHERE run_id = 1
+GROUP BY 1, 2
+ORDER BY 1, 2;
+```
+
 ## 누락 확인
 
 ```sql
