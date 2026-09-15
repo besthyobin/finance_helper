@@ -1,11 +1,13 @@
 import itertools
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from pathlib import Path
 
 import pytest
 import requests
 
-from kis import KST, KisClient, KisError
+from kis import KST, Bar, KisClient, KisError
 
 NOW = datetime(2026, 9, 14, 16, 0, tzinfo=KST)
 
@@ -183,3 +185,94 @@ def test_throttle_waits_between_calls(tmp_path):
     client.rps = 10
     get(client)
     assert sleeps == [pytest.approx(0.1)]
+
+
+TODAY = date(2026, 9, 14)
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def row(hhmmss, ymd="20260914", price="70000"):
+    """KIS output2 한 행을 만든다."""
+    return {"stck_bsop_date": ymd, "stck_cntg_hour": hhmmss, "stck_prpr": price,
+            "stck_oprc": price, "stck_hgpr": price, "stck_lwpr": price,
+            "cntg_vol": "100", "acml_tr_pbmn": "0"}
+
+
+def day_minutes():
+    """정상 거래일 1분봉 시각(09:00~15:20 매분, 15:30)을 HHMMSS 목록으로 만든다."""
+    out, t = [], datetime(2026, 9, 14, 9, 0)
+    while t.time() <= time(15, 20):
+        out.append(t.strftime("%H%M%S"))
+        t += timedelta(minutes=1)
+    return out + ["153000"]
+
+
+def market(minutes):
+    """기준 시각 이하의 봉을 최신순으로 최대 30개 돌려주는 on_get 핸들러를 만든다."""
+    def on_get(params):
+        hour = params["FID_INPUT_HOUR_1"]
+        picked = sorted((m for m in minutes if m <= hour), reverse=True)[:30]
+        return ok([row(m) for m in picked])
+    return on_get
+
+
+def test_fetch_parses_kis_fields(tmp_path):
+    """KIS 응답 필드를 Bar로 변환한다."""
+    body = json.loads((FIXTURES / "minute_page.json").read_text(encoding="utf-8"))
+    fake = FakeKis(on_get=lambda params: FakeResponse(body))
+    bars = make_client(tmp_path, fake).fetch_minute_bars("005930", TODAY)
+    assert [b.ts.time() for b in bars] == [time(9, 8), time(9, 9), time(9, 10)]
+    assert bars[-1] == Bar(datetime(2026, 9, 14, 9, 10, tzinfo=KST), Decimal("70000"),
+                           Decimal("70200"), Decimal("69900"), Decimal("70100"), 15234)
+
+
+def test_fetch_sends_minute_chart_request(tmp_path):
+    """당일분봉 경로·TR ID·파라미터로 15:30부터 요청한다."""
+    fake = FakeKis(on_get=lambda params: ok())
+    make_client(tmp_path, fake).fetch_minute_bars("005930", TODAY)
+    _, url, kwargs = fake.gets()[0]
+    assert url.endswith("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice")
+    assert kwargs["headers"]["tr_id"] == "FHKST03010200"
+    assert kwargs["params"] == {"FID_ETC_CLS_CODE": "", "FID_COND_MRKT_DIV_CODE": "J",
+                                "FID_INPUT_ISCD": "005930", "FID_INPUT_HOUR_1": "153000",
+                                "FID_PW_DATA_INCU_YN": "Y"}
+
+
+def test_fetch_walks_back_to_market_open(tmp_path):
+    """15:30부터 거꾸로 받아 09:00에서 멈추고, 겹친 봉 없이 오름차순으로 반환한다."""
+    minutes = day_minutes()
+    fake = FakeKis(on_get=market(minutes))
+    bars = make_client(tmp_path, fake).fetch_minute_bars("005930", TODAY)
+    assert len(bars) == len(minutes)
+    assert bars[0].ts == datetime(2026, 9, 14, 9, 0, tzinfo=KST)
+    assert bars[-1].ts == datetime(2026, 9, 14, 15, 30, tzinfo=KST)
+    assert all(a.ts < b.ts for a, b in zip(bars, bars[1:]))
+    assert len(fake.gets()) <= 20
+
+
+def test_fetch_stops_when_time_does_not_move_back(tmp_path):
+    """다음 페이지의 가장 이른 시각이 기준 시각보다 이르지 않으면 멈춘다."""
+    same_page = ok([row(m) for m in sorted(day_minutes()[360:390], reverse=True)])
+    fake = FakeKis(on_get=lambda params: same_page)
+    bars = make_client(tmp_path, fake).fetch_minute_bars("005930", TODAY)
+    assert len(fake.gets()) == 2
+    assert len(bars) == len(same_page.json()["output2"])
+
+
+def test_fetch_raises_after_20_pages(tmp_path):
+    """20페이지 안에 09:00에 닿지 못하면 PAGINATION 예외를 낸다."""
+    def one_minute_back(params):
+        t = datetime.strptime(params["FID_INPUT_HOUR_1"], "%H%M%S") - timedelta(minutes=1)
+        return ok([row(t.strftime("%H%M%S"))])
+    fake = FakeKis(on_get=one_minute_back)
+    with pytest.raises(KisError) as e:
+        make_client(tmp_path, fake).fetch_minute_bars("005930", TODAY)
+    assert e.value.code == "PAGINATION"
+    assert len(fake.gets()) == 20
+
+
+def test_fetch_ignores_other_dates(tmp_path):
+    """오늘이 아닌 날짜의 봉만 오면 빈 목록을 반환하고 더 요청하지 않는다."""
+    fake = FakeKis(on_get=lambda params: ok([row("153000", ymd="20260911")]))
+    assert make_client(tmp_path, fake).fetch_minute_bars("005930", TODAY) == []
+    assert len(fake.gets()) == 1

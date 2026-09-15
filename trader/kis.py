@@ -1,7 +1,9 @@
 """한국투자증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도."""
 import json
 import time as _time
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import requests
@@ -9,6 +11,30 @@ import requests
 KST = timezone(timedelta(hours=9))
 NETWORK_DELAYS = (1, 2, 4)
 RATE_LIMIT_RETRIES = 3
+MINUTE_CHART_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+MINUTE_CHART_TR_ID = "FHKST03010200"
+MARKET_CLOSE = "153000"
+MARKET_OPEN = "090000"
+MAX_PAGES = 20
+
+
+@dataclass(frozen=True)
+class Bar:
+    """1분봉 한 개. ts는 KST 봉 시각."""
+    ts: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+
+
+def _to_bar(row, today):
+    """KIS output2 한 행을 Bar로 변환한다."""
+    h = row["stck_cntg_hour"]
+    ts = datetime.combine(today, time(int(h[:2]), int(h[2:4]), int(h[4:6])), KST)
+    return Bar(ts, Decimal(row["stck_oprc"]), Decimal(row["stck_hgpr"]),
+               Decimal(row["stck_lwpr"]), Decimal(row["stck_prpr"]), int(row["cntg_vol"]))
 
 
 class KisError(Exception):
@@ -140,3 +166,31 @@ class KisClient:
                 network_tries += 1
                 continue
             raise KisError(code or f"HTTP{resp.status_code}", body.get("msg1", ""))
+
+    def fetch_minute_bars(self, symbol, today: date):
+        """당일 1분봉을 15:30부터 거꾸로 30개씩 받아 시각 오름차순으로 반환한다."""
+        ymd = today.strftime("%Y%m%d")
+        bars = {}
+        hour = MARKET_CLOSE
+        for _ in range(MAX_PAGES):
+            body = self._get(MINUTE_CHART_PATH, MINUTE_CHART_TR_ID, {
+                "FID_ETC_CLS_CODE": "",
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_HOUR_1": hour,
+                "FID_PW_DATA_INCU_YN": "Y",
+            })
+            rows = [r for r in body.get("output2") or []
+                    if r.get("stck_bsop_date") == ymd and r.get("stck_cntg_hour")]
+            if not rows:
+                break
+            for r in rows:
+                bar = _to_bar(r, today)
+                bars[bar.ts] = bar
+            earliest = min(r["stck_cntg_hour"] for r in rows)
+            if earliest <= MARKET_OPEN or earliest >= hour:
+                break
+            hour = earliest
+        else:
+            raise KisError("PAGINATION", f"{symbol} {MAX_PAGES}페이지 초과")
+        return sorted(bars.values(), key=lambda b: b.ts)
