@@ -32,3 +32,27 @@ CREATE TABLE IF NOT EXISTS collect_runs (
     collected_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (symbol, trade_date)
 );
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id          bigserial   PRIMARY KEY,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    strategy    text        NOT NULL,
+    params      jsonb       NOT NULL,   -- 기본값에 --param을 덮어쓴 최종값
+    source      text        NOT NULL,
+    symbols     text[]      NOT NULL,   -- 실제로 봉이 있어 백테스트한 종목
+    date_from   date        NOT NULL,
+    date_to     date        NOT NULL,
+    costs       jsonb       NOT NULL    -- {"fee":"0.00015","tax":"0.002","slippage":"0.0005","exit_at":"15:15"}
+);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    run_id       bigint      NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
+    symbol       text        NOT NULL,
+    entry_ts     timestamptz NOT NULL,  -- 체결 봉 시각
+    entry_price  numeric     NOT NULL,  -- 슬리피지 반영 매수가
+    exit_ts      timestamptz NOT NULL,
+    exit_price   numeric     NOT NULL,  -- 슬리피지 반영 매도가
+    return_pct   numeric     NOT NULL,  -- 비용 반영 수익률(%)
+    exit_reason  text        NOT NULL CHECK (exit_reason IN ('signal', 'close_time', 'day_end')),
+    PRIMARY KEY (run_id, symbol, entry_ts)
+);

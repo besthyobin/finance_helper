@@ -2,6 +2,10 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import psycopg
+import pytest
+
+import engine
 import store
 from kis import KST, Bar
 
@@ -111,3 +115,40 @@ def test_load_bars_filters_source_dates_symbols(conn):
     assert {s: [b.ts for b in bars] for s, bars in got.items()} == {"A": inside, "B": [inside[1]]}
     assert got["A"][0].ts.utcoffset() == KST.utcoffset(None)
     assert list(store.load_bars(conn, "yahoo", date(2026, 9, 11), date(2026, 9, 11), ["B"])) == ["B"]
+
+
+def run_info():
+    """save_run에 넘길 실행 정보 예시."""
+    return {"strategy": "orb", "params": {"range_end": "09:30"}, "source": "yahoo",
+            "symbols": ["A"], "date_from": date(2026, 9, 11), "date_to": date(2026, 9, 11),
+            "costs": {"fee": "0.00015", "tax": "0.002", "slippage": "0.0005", "exit_at": "15:15"}}
+
+
+def trade(minute):
+    """09:minute에 진입해 1분 뒤 청산한 테스트용 거래."""
+    t = datetime(2026, 9, 11, 9, minute, tzinfo=KST)
+    return engine.Trade("A", t, Decimal("100.05"), t.replace(minute=minute + 1),
+                        Decimal("100.95"), Decimal("0.6789"), "signal")
+
+
+def test_save_run_stores_run_and_trades(conn):
+    """실행과 거래를 저장하고 run id를 반환한다."""
+    run_id = store.save_run(conn, run_info(), [trade(0), trade(5)])
+    assert conn.execute("SELECT strategy, params, symbols, costs->>'exit_at' FROM backtest_runs WHERE id = %s",
+                        (run_id,)).fetchone() == ("orb", {"range_end": "09:30"}, ["A"], "15:15")
+    rows = conn.execute("SELECT entry_price, return_pct, exit_reason FROM backtest_trades "
+                        "WHERE run_id = %s ORDER BY entry_ts", (run_id,)).fetchall()
+    assert rows == [(Decimal("100.05"), Decimal("0.6789"), "signal")] * 2
+
+
+def test_save_run_without_trades(conn):
+    """거래가 없어도 실행은 저장된다."""
+    run_id = store.save_run(conn, run_info(), [])
+    assert conn.execute("SELECT count(*) FROM backtest_runs WHERE id = %s", (run_id,)).fetchone()[0] == 1
+
+
+def test_save_run_rolls_back_on_trade_error(conn):
+    """거래 저장이 실패하면 실행 행도 남지 않는다."""
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        store.save_run(conn, run_info(), [trade(0), trade(0)])
+    assert conn.execute("SELECT count(*) FROM backtest_runs").fetchone()[0] == 0

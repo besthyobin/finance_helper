@@ -1,6 +1,8 @@
 """minute_bars·collect_runs·backtest 테이블 저장과 조회."""
 from datetime import datetime, time, timedelta
 
+from psycopg.types.json import Jsonb
+
 from kis import KST, Bar
 
 
@@ -27,6 +29,25 @@ def load_bars(conn, source, date_from, date_to, symbols=None):
     for symbol, ts, o, h, l, c, v in conn.execute(sql + " ORDER BY symbol, ts", args):
         bars.setdefault(symbol, []).append(Bar(ts.astimezone(KST), o, h, l, c, v))
     return bars
+
+
+def save_run(conn, run, trades):
+    """백테스트 실행 정보와 거래 내역을 한 트랜잭션으로 저장하고 run id를 반환한다."""
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO backtest_runs (strategy, params, source, symbols, date_from, date_to, costs) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (run["strategy"], Jsonb(run["params"]), run["source"], run["symbols"],
+             run["date_from"], run["date_to"], Jsonb(run["costs"])),
+        )
+        run_id = cur.fetchone()[0]
+        cur.executemany(
+            "INSERT INTO backtest_trades (run_id, symbol, entry_ts, entry_price, exit_ts, "
+            "exit_price, return_pct, exit_reason) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [(run_id, t.symbol, t.entry_ts, t.entry_price, t.exit_ts, t.exit_price,
+              t.return_pct, t.exit_reason) for t in trades],
+        )
+    return run_id
 
 
 def record_run(conn, symbol, trade_date, bar_count, status, error=None):
