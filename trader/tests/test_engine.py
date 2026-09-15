@@ -23,6 +23,7 @@ class Script:
     """봉 순번별로 정해진 신호를 내고, 받은 entry_price를 기록하는 테스트용 전략."""
 
     def __init__(self, signals):
+        """봉 순번(int) → 신호("buy"/"sell") 매핑을 받아 초기 상태를 둔다."""
         self.signals = signals
         self.i = 0
         self.seen = []
@@ -99,6 +100,7 @@ def test_run_splits_days_and_uses_fresh_strategy():
     """run은 날짜별로 새 전략을 만들어 전날 포지션이 다음 날로 이어지지 않는다."""
     class BuyFirst(Script):
         def __init__(self, params):
+            """params는 무시하고 항상 첫 봉에서 매수하는 전략을 만든다."""
             super().__init__({0: "buy"})
 
     day1 = bars_from("14:58", [("100", "100"), ("101", "101")], day=10)

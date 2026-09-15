@@ -3,7 +3,7 @@ import argparse
 import os
 import sys
 from datetime import date, time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import psycopg
@@ -20,6 +20,14 @@ class UsageError(Exception):
     """잘못된 실행 인자."""
 
 
+def _decimal(text):
+    """argparse용 Decimal 변환. 숫자가 아니면 ValueError를 내 사용법 오류로 처리되게 한다."""
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        raise ValueError(text) from None
+
+
 def parse_args(argv):
     """인자를 해석·검증해 (args, {전략이름: 최종 파라미터})를 반환한다. 잘못되면 UsageError."""
     p = argparse.ArgumentParser(description="분봉 백테스트")
@@ -29,9 +37,9 @@ def parse_args(argv):
     p.add_argument("--to", dest="date_to", required=True, type=date.fromisoformat)
     p.add_argument("--symbols", help="쉼표 구분 종목코드, 없으면 전 종목")
     p.add_argument("--param", action="append", default=[], help="key=value, 여러 번 지정")
-    p.add_argument("--fee", type=Decimal, default=Decimal("0.00015"))
-    p.add_argument("--tax", type=Decimal, default=Decimal("0.002"))
-    p.add_argument("--slippage", type=Decimal, default=Decimal("0.0005"))
+    p.add_argument("--fee", type=_decimal, default=Decimal("0.00015"))
+    p.add_argument("--tax", type=_decimal, default=Decimal("0.002"))
+    p.add_argument("--slippage", type=_decimal, default=Decimal("0.0005"))
     p.add_argument("--exit-at", type=time.fromisoformat, default=time(15, 15))
     args = p.parse_args(argv)
 
@@ -58,6 +66,7 @@ def parse_args(argv):
         try:
             params[name] = {**defaults, **{k: type(defaults[k])(v)
                                            for k, v in overrides.items() if k in defaults}}
+            STRATEGIES[name](params[name])
         except ValueError as e:
             raise UsageError(f"파라미터 값 오류: {e}") from None
     return args, params
@@ -106,6 +115,7 @@ def main(argv=None):
     symbols = args.symbols.split(",") if args.symbols else None
     try:
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
+            # ponytail: 기간 전체 봉을 한 번에 메모리에 올림(1년×50종목≈470만 봉, 수 GB). 수개월 이상 KIS 데이터로 돌리기 전에 종목별로 조회·실행하도록 바꿀 것
             bars = store.load_bars(conn, args.source, args.date_from, args.date_to, symbols)
             if not bars:
                 print("봉 데이터 없음")

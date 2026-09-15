@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from kis import KST, Bar
 from strategies import STRATEGIES, MaCross, Orb
 
@@ -60,3 +62,10 @@ def test_orb_sells_at_stop_or_target():
     entry = Decimal("100")
     assert [orb.on_bar(bar_at(i, c), entry) for i, c in enumerate(["99.5", "99", "101", "102"])] == [
         None, "sell", None, "sell"]
+
+
+def test_ma_cross_rejects_short_not_less_than_long():
+    """short가 0 이하이거나 long 이상이면 ValueError를 낸다."""
+    for params in ({"short": 20, "long": 20}, {"short": 0}):
+        with pytest.raises(ValueError):
+            MaCross(params)

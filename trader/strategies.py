@@ -26,6 +26,8 @@ class MaCross(Strategy):
     def __init__(self, params):
         """최근 long개 종가와 직전 봉의 (단기, 장기) 평균을 보관한다."""
         super().__init__(params)
+        if not 0 < self.p["short"] < self.p["long"]:
+            raise ValueError("ma_cross는 0 < short < long 이어야 함")
         self.closes = deque(maxlen=self.p["long"])
         self.prev = None
 

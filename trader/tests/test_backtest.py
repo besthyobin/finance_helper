@@ -41,6 +41,7 @@ def test_summarize_computes_metrics():
     t0 = datetime(2026, 9, 11, 9, 0, tzinfo=KST)
 
     def tr(minute, ret):
+        """entry_ts가 minute분 뒤, 2분 보유, return_pct가 ret인 거래를 만든다."""
         return backtest.engine.Trade("A", t0 + timedelta(minutes=minute), Decimal(1),
                                      t0 + timedelta(minutes=minute + 2), Decimal(1), Decimal(ret), "signal")
 
@@ -83,6 +84,9 @@ def test_main_returns_1_without_bars(db_env, capsys):
     ["--strategy", "orb", "--param", "short=2"],
     ["--strategy", "ma_cross", "--param", "short=abc"],
     ["--strategy", "orb", "--param", "broken"],
+    ["--strategy", "ma_cross", "--param", "short=30"],
+    ["--strategy", "ma_cross", "--param", "short=0"],
+    ["--strategy", "orb", "--param", "range_end=25:99"],
 ])
 def test_main_returns_2_for_bad_args(db_env, extra):
     """없는 전략·전략에 없는 파라미터·잘못된 값·형식 오류는 2를 반환하고 저장하지 않는다."""
@@ -104,3 +108,10 @@ def test_main_hides_connection_string_on_db_failure(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "실행 실패: ProgrammingError" in out
     assert "SECRETPW" not in out
+
+
+def test_parse_args_rejects_non_numeric_cost():
+    """숫자가 아닌 비용 값은 argparse 사용법 오류(종료 코드 2)가 된다."""
+    with pytest.raises(SystemExit) as e:
+        backtest.parse_args(["--strategy", "orb", "--fee", "abc", *ARGS])
+    assert e.value.code == 2

@@ -17,6 +17,7 @@ class FakeResponse:
     """requests.Response 대역: status_code와 json()만 흉내 낸다."""
 
     def __init__(self, body, status=200):
+        """돌려줄 JSON 본문과 상태 코드를 저장한다."""
         self.status_code = status
         self._body = body
 
@@ -30,6 +31,7 @@ def fake_yahoo(ok_tickers):
     calls = []
 
     def send(url, **kwargs):
+        """URL 끝 티커가 ok_tickers에 있으면 샘플 응답을, 없으면 404 Not Found를 돌려준다."""
         ticker = url.rsplit("/", 1)[1]
         calls.append(ticker)
         assert kwargs["params"] == {"interval": "1m", "range": "8d"}

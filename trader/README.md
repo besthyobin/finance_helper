@@ -47,8 +47,10 @@ Register-ScheduledTask -TaskName "KIS 분봉 수집기" -Action $action -Trigger
 백테스터 추가로 `minute_bars`에 `source` 컬럼과 결과 테이블이 생겼다. 기존 데이터는 `source='kis'`로 보존된다.
 
 ```powershell
-D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U trader -d trader -f schema.sql
+D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U trader -d trader -v ON_ERROR_STOP=1 -f schema.sql
 ```
+
+코드 갱신 직후, 수집기 다음 실행(평일 16:00~23:00) 전에 적용한다. 적용 전에는 수집기가 모든 종목을 error로 기록한다(당일분봉은 다음 날 복구 불가). 적용 후 확인: SELECT source, count(*) FROM minute_bars GROUP BY 1;
 
 ## Yahoo 임시 데이터 적재
 
@@ -109,7 +111,7 @@ ORDER BY trade_date DESC, symbol;
 ## 키 발급 후 수동 검증 (1회)
 
 1. `symbols.txt`를 005930, 000660 두 종목으로 두고 평일 15:35 이후 `.\.venv\Scripts\python collector.py` 실행
-2. 종목당 약 381개 저장 확인: `SELECT symbol, count(*) FROM minute_bars GROUP BY symbol;`
+2. 종목당 약 381개 저장 확인: `SELECT symbol, count(*) FROM minute_bars WHERE source = 'kis' GROUP BY symbol;`
 3. 임의 봉 3개를 HTS/MTS 1분 차트와 시가·고가·저가·종가·거래량 대조
 4. 응답 필드명, 오류 코드(`EGW00123`, `EGW00133`, `EGW00201`), 호출 한도, 주식일별분봉조회 API 사용 가능 여부가 설계와 다르면 스펙과 코드 수정
 5. 작업 스케줄러 등록 후 하루 동안 두 번째 실행부터 `skipped`만 나오는지 로그 확인
