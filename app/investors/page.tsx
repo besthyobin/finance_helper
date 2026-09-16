@@ -13,6 +13,7 @@ interface InvestorOption {
 interface PortfolioData {
   investor: string;
   fund: string;
+  cik: string;
   filingDate: string;
   totalValue: number;
   holdingsCount: number;
