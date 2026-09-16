@@ -14,29 +14,6 @@ export interface NewsItem {
   tags?: string[];
 }
 
-export interface StockQuote {
-  symbol: string;
-  name: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  volume: number;
-  marketCap: number;
-  country: 'US' | 'KR' | 'CN';
-  exchange?: string;
-  sector?: string;
-}
-
-export interface MarketIndex {
-  symbol: string;
-  name: string;
-  value: number;
-  change: number;
-  changePercent: number;
-  country: 'US' | 'KR' | 'CN' | 'JP';
-  previousClose?: number;
-}
-
 export interface HedgeFund {
   name: string;
   manager: string;
@@ -88,14 +65,3 @@ export interface IpoListing {
   status: 'upcoming' | 'priced' | 'filed';
 }
 
-export interface TrendingStock {
-  rank: number;
-  symbol: string;
-  name: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  volume: number;
-  country: 'US' | 'KR' | 'CN';
-  reason?: string;
-}

@@ -72,24 +72,5 @@ export function buildFmpUrl(path: string, params: Record<string, string> = {}): 
   return `${base}${path}?${query}`;
 }
 
-/** 국가 코드 → 이름 */
-export const COUNTRY_LABELS: Record<string, string> = {
-  US: '🇺🇸 미국',
-  KR: '🇰🇷 한국',
-  CN: '🇨🇳 중국',
-};
-
-/** 주요 시장 지수 심볼 */
-export const INDEX_SYMBOLS = {
-  SP500:  '^GSPC',
-  NASDAQ: '^IXIC',
-  DOW:    '^DJI',
-  KOSPI:  '^KS11',
-  KOSDAQ: '^KQ11',
-  SSE:    '000001.SS',   // 상하이 종합지수
-  SZSE:   '399001.SZ',   // 선전 성분지수
-  HSCEI:  '^HSI',        // 홍콩 항셍
-};
-
 /** Berkshire Hathaway CIK (워런 버핏) */
 export const BERKSHIRE_CIK = '0001067983';

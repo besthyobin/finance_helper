@@ -7,10 +7,6 @@ import { useState } from 'react';
 const navItems = [
   { href: '/',             label: '대시보드',        icon: '📊' },
   { href: '/news',         label: '글로벌 뉴스',     icon: '📰' },
-  { href: '/trending',     label: '이슈 종목',       icon: '🔥' },
-  { href: '/market/us',    label: '미국 시장',       icon: '🇺🇸' },
-  { href: '/market/kr',    label: '한국 시장',       icon: '🇰🇷' },
-  { href: '/market/cn',    label: '중국 시장',       icon: '🇨🇳' },
   { href: '/hedge-funds',  label: '헤지펀드',        icon: '🏦' },
   { href: '/ipo',          label: 'IPO 캘린더',      icon: '🚀' },
   { href: '/investors',    label: '투자자 포트폴리오', icon: '💼' },
