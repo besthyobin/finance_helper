@@ -56,16 +56,16 @@ export async function GET(req: Request) {
   const category = searchParams.get('category') || 'global';
 
   const feeds: Array<{ url: string; source: string; category: NewsItem['category'] }> = [
-    // 글로벌 / 미국
-    { url: 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=^DJI&region=US&lang=en-US', source: 'Yahoo Finance', category: 'us' },
-    { url: 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=^IXIC&region=US&lang=en-US', source: 'Yahoo Finance NASDAQ', category: 'us' },
+    // 글로벌
     { url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', source: 'CNBC Markets', category: 'global' },
-    { url: 'https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best', source: 'Reuters', category: 'global' },
+    // 미국
+    { url: 'https://finance.yahoo.com/news/rssindex', source: 'Yahoo Finance', category: 'us' },
+    { url: 'https://feeds.content.dowjones.io/public/rss/mw_marketpulse', source: 'MarketWatch', category: 'us' },
     // 한국
     { url: 'https://www.hankyung.com/feed/finance', source: '한국경제', category: 'kr' },
-    { url: 'https://stock.mk.co.kr/rss/40300001', source: '매일경제', category: 'kr' },
+    { url: 'https://www.yna.co.kr/rss/economy.xml', source: '연합뉴스', category: 'kr' },
     // 중국
-    { url: 'https://www.cnfinance.cn/rss/index.xml', source: 'China Finance', category: 'cn' },
+    { url: 'https://www.scmp.com/rss/92/feed', source: 'SCMP Business', category: 'cn' },
   ];
 
   const selectedFeeds = category === 'all'
