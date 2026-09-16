@@ -79,15 +79,6 @@ ORDER BY trade_date DESC, symbol;
 
 정상 거래일 봉 수는 NXT 거래 종목 720, 정규장만 거래하는 종목 390이다. 수능일·연초 개장일 같은 단축 거래일은 더 적을 수 있다.
 
-## Yahoo 임시 데이터 적재
-
-토스 데이터가 쌓이기 전 개발·검증용. 최근 약 7거래일, 하루 360봉(09:00~14:59, 15시 이후 봉 없음). 비공식 API라 언제든 막힐 수 있다.
-
-```powershell
-.\.venv\Scripts\python load_yahoo.py              # symbols.txt 전 종목
-.\.venv\Scripts\python load_yahoo.py 005930 000660
-```
-
 ## 백테스트
 
 ```powershell
@@ -97,7 +88,7 @@ ORDER BY trade_date DESC, symbol;
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
 | `--strategy` | (필수) | 쉼표 구분. 전략마다 실행 1건 저장 |
-| `--source` | (필수) | `toss` 또는 `yahoo` |
+| `--source` | (필수) | `toss` |
 | `--from`, `--to` | (필수) | KST 날짜, 양끝 포함 |
 | `--symbols` | 전 종목 | 쉼표 구분 종목코드 |
 | `--param key=value` | 전략 기본값 | 여러 번 지정. 그 키를 가진 전략에만 적용 |

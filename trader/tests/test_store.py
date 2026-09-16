@@ -90,28 +90,28 @@ def test_save_bars_separates_sources(conn):
     """같은 종목·시각이라도 source가 다르면 따로 저장된다."""
     b = bar_ts(datetime(2026, 9, 11, 9, 0, tzinfo=KST))
     store.save_bars(conn, "005930", [b])
-    store.save_bars(conn, "005930", [b], source="yahoo")
+    store.save_bars(conn, "005930", [b], source="toss")
     rows = conn.execute("SELECT source FROM minute_bars ORDER BY source").fetchall()
-    assert rows == [("kis",), ("yahoo",)]
+    assert rows == [("kis",), ("toss",)]
 
 
 def test_load_bars_filters_source_dates_symbols(conn):
     """source·KST 날짜 경계·종목으로 걸러 종목별 시각 오름차순으로 돌려준다."""
     inside = [datetime(2026, 9, 11, 0, 30, tzinfo=KST), datetime(2026, 9, 11, 9, 0, tzinfo=KST)]
-    store.save_bars(conn, "A", [bar_ts(t) for t in reversed(inside)], source="yahoo")
-    store.save_bars(conn, "A", [bar_ts(datetime(2026, 9, 12, 0, 0, tzinfo=KST))], source="yahoo")
-    store.save_bars(conn, "B", [bar_ts(inside[1])], source="yahoo")
+    store.save_bars(conn, "A", [bar_ts(t) for t in reversed(inside)], source="toss")
+    store.save_bars(conn, "A", [bar_ts(datetime(2026, 9, 12, 0, 0, tzinfo=KST))], source="toss")
+    store.save_bars(conn, "B", [bar_ts(inside[1])], source="toss")
     store.save_bars(conn, "C", [bar_ts(inside[1])], source="kis")
 
-    got = store.load_bars(conn, "yahoo", date(2026, 9, 11), date(2026, 9, 11))
+    got = store.load_bars(conn, "toss", date(2026, 9, 11), date(2026, 9, 11))
     assert {s: [b.ts for b in bars] for s, bars in got.items()} == {"A": inside, "B": [inside[1]]}
     assert got["A"][0].ts.utcoffset() == KST.utcoffset(None)
-    assert list(store.load_bars(conn, "yahoo", date(2026, 9, 11), date(2026, 9, 11), ["B"])) == ["B"]
+    assert list(store.load_bars(conn, "toss", date(2026, 9, 11), date(2026, 9, 11), ["B"])) == ["B"]
 
 
 def run_info():
     """save_run에 넘길 실행 정보 예시."""
-    return {"strategy": "orb", "params": {"range_end": "09:30"}, "source": "yahoo",
+    return {"strategy": "orb", "params": {"range_end": "09:30"}, "source": "toss",
             "symbols": ["A"], "date_from": date(2026, 9, 11), "date_to": date(2026, 9, 11),
             "costs": {"fee": "0.00015", "tax": "0.002", "slippage": "0.0005", "exit_at": "15:15"}}
 

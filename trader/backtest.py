@@ -35,7 +35,7 @@ def parse_args(argv):
     """인자를 해석·검증해 (args, {전략이름: 최종 파라미터})를 반환한다. 잘못되면 UsageError."""
     p = argparse.ArgumentParser(description="분봉 백테스트")
     p.add_argument("--strategy", required=True, help="쉼표 구분 전략 이름: " + ", ".join(STRATEGIES))
-    p.add_argument("--source", required=True, help="minute_bars.source (toss, yahoo)")
+    p.add_argument("--source", required=True, help="minute_bars.source (toss)")
     p.add_argument("--from", dest="date_from", required=True, type=date.fromisoformat)
     p.add_argument("--to", dest="date_to", required=True, type=date.fromisoformat)
     p.add_argument("--symbols", help="쉼표 구분 종목코드, 없으면 전 종목")

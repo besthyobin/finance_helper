@@ -8,7 +8,7 @@ import backtest
 import store
 from bars import KST, Bar
 
-ARGS = ["--source", "yahoo", "--from", "2026-09-11", "--to", "2026-09-11"]
+ARGS = ["--source", "toss", "--from", "2026-09-11", "--to", "2026-09-11"]
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def test_summarize_computes_metrics():
 
 def test_main_saves_run_per_strategy(db_env, capsys):
     """전략마다 run을 1건씩 저장하고 거래를 기록하며, 다른 source 봉은 쓰지 않는다."""
-    store.save_bars(db_env, "A", breakout_day(), source="yahoo")
+    store.save_bars(db_env, "A", breakout_day(), source="toss")
     store.save_bars(db_env, "B", breakout_day(), source="kis")
     code = backtest.main(["--strategy", "ma_cross,orb", "--param", "short=2", "--param", "long=3", *ARGS])
     assert code == 0
@@ -90,14 +90,14 @@ def test_main_returns_1_without_bars(db_env, capsys):
 ])
 def test_main_returns_2_for_bad_args(db_env, extra):
     """없는 전략·전략에 없는 파라미터·잘못된 값·형식 오류는 2를 반환하고 저장하지 않는다."""
-    store.save_bars(db_env, "A", breakout_day(), source="yahoo")
+    store.save_bars(db_env, "A", breakout_day(), source="toss")
     assert backtest.main([*extra, *ARGS]) == 2
     assert db_env.execute("SELECT count(*) FROM backtest_runs").fetchone()[0] == 0
 
 
 def test_main_returns_2_when_from_after_to(db_env):
     """--from이 --to보다 늦으면 2를 반환한다."""
-    assert backtest.main(["--strategy", "orb", "--source", "yahoo",
+    assert backtest.main(["--strategy", "orb", "--source", "toss",
                           "--from", "2026-09-12", "--to", "2026-09-11"]) == 2
 
 
@@ -134,11 +134,11 @@ def test_regular_session_keeps_0900_to_1529():
 
 def test_main_session_option(db_env, capsys):
     """regular는 정규장 봉이 없는 종목을 빼고(전부 없으면 1), all은 전 종목을 쓰며 costs에 session을 남긴다."""
-    store.save_bars(db_env, "B", [bar_at(16, 0)], source="yahoo")
+    store.save_bars(db_env, "B", [bar_at(16, 0)], source="toss")
     assert backtest.main(["--strategy", "orb", *ARGS]) == 1
     assert "봉 데이터 없음" in capsys.readouterr().out
 
-    store.save_bars(db_env, "A", breakout_day(), source="yahoo")
+    store.save_bars(db_env, "A", breakout_day(), source="toss")
     assert backtest.main(["--strategy", "orb", *ARGS]) == 0
     assert backtest.main(["--strategy", "orb", "--session", "all", *ARGS]) == 0
     rows = db_env.execute("SELECT symbols, costs->>'session' FROM backtest_runs ORDER BY id").fetchall()
