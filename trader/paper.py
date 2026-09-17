@@ -66,17 +66,20 @@ class Paper:
         self.trades = {s: [] for s in symbols}  # 전략 기준 거래 전체(0주 포함), 마감 비교용
         self.saved = []                           # 저장한 거래의 (종목, 원화 손익)
         self.fails = dict.fromkeys(symbols, 0)
+        self.errors = dict.fromkeys(symbols, 0)
 
     def poll(self, client, symbol, now, catch_up=False):
         """끝난 봉을 받아 처리한다. 따라잡기거나 빈 분이 있으면 하루치를 받는다.
         인증 오류는 올리고, 토스 오류는 로그만 남기며 연속 5회째에 한 번 알린다.
-        그 밖의 오류(예: DB 저장 실패)는 재시작 따라잡기로 복구되지만, 그때까지 거래가 비므로 즉시 알린다."""
+        그 밖의 오류(예: DB 저장 실패)는 재시작 따라잡기로 복구되지만, 그때까지 거래가 비므로
+        실패마다 로그를 남기되 알림은 연속 실패 시작(1회째)에만 보낸다."""
         try:
             bars = [] if catch_up else regular(client.fetch_recent(symbol, RECENT_COUNT), now)
             if catch_up or self._has_gap(symbol, bars):
                 bars = regular(client.fetch_day(symbol, self.today), now)
             self.process(symbol, bars, alert=not catch_up)
             self.fails[symbol] = 0
+            self.errors[symbol] = 0
         except TossAuthError:
             raise
         except TossError as e:
@@ -86,9 +89,12 @@ class Paper:
                 notify.send_telegram(f"[모의투자] {symbol} 연속 {ALERT_AFTER_FAILS}분 실패: {type(e).__name__}")
         except Exception as e:
             # ponytail: 처리 중 DB 저장 등이 실패하면 runner는 앞서 나가고 그 거래는 저장되지 않는다.
-            # 재시작 따라잡기로 복구되니, 알림을 보고 재시작할 것
+            # 재시작 따라잡기로 복구되니, 알림을 보고 재시작할 것. 알림은 연속 실패가 계속되는 동안
+            # 반복하지 않도록 스트릭이 1이 될 때(처음 실패했을 때)만 보낸다
+            self.errors[symbol] += 1
             log.exception("%s 처리 실패: %s", symbol, type(e).__name__)
-            notify.send_telegram(f"[모의투자] {symbol} 처리 실패: {type(e).__name__}, DB·코드 확인 후 재시작 필요")
+            if self.errors[symbol] == 1:
+                notify.send_telegram(f"[모의투자] {symbol} 처리 실패: {type(e).__name__}, DB·코드 확인 후 재시작 필요")
 
     def _new(self, symbol, bars):
         """마지막으로 받은 봉 이후의 봉만 반환한다."""
@@ -205,7 +211,8 @@ def run(client, conn, symbols, capital, now=lambda: datetime.now(KST), sleep=_ti
 
     paper = Paper(conn, symbols, capital, today)
     for symbol in symbols:
-        paper.poll(client, symbol, now(), catch_up=True)
+        # 아직 바뀔 수 있는 진행 중 봉을 따라잡기가 가져가지 않도록 FETCH_SECOND초 이전 시각을 쓴다
+        paper.poll(client, symbol, now() - timedelta(seconds=FETCH_SECOND), catch_up=True)
     held = sum(1 for s in symbols if paper.status_row(s)["qty"])
     notify.send_telegram(f"[모의투자] {today} 시작(따라잡기 완료): {len(symbols)}종목, "
                          f"보유 {held}종목, 거래 {len(paper.saved)}건")

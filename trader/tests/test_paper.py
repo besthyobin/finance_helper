@@ -257,6 +257,18 @@ def test_db_failure_while_processing_alerts_immediately(conn, sent, monkeypatch)
     assert not any("연속 5분 실패" in m for m in sent)
 
 
+def test_db_failure_alerts_once_until_recovery(conn, sent, monkeypatch):
+    """상태 저장이 매분 계속 실패해도 알림은 실패가 시작될 때 1번만 보낸다."""
+    def fail_save(conn, row):
+        """paper_status 저장을 항상 실패시킨다."""
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(paper.store, "save_paper_status", fail_save)
+    code, _, _ = run_from(conn, at("08:55"), {"A": day_bars(breakout)}, capital="500000")
+    assert code == 0
+    assert sent.count("[모의투자] A 처리 실패: RuntimeError, DB·코드 확인 후 재시작 필요") == 1
+
+
 @pytest.fixture
 def main_env(monkeypatch, sent):
     """main 실행 환경: .env 읽기를 막고 필수 값과 종목을 채운 뒤 알림 목록을 반환한다."""
