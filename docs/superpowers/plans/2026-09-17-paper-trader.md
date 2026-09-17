@@ -833,7 +833,7 @@ def test_fetch_failures_alert_once_and_gap_is_filled(conn, sent):
             return TossError("HTTP500")
         return None
 
-    code, client, _ = run_from(conn, at("08:55"), {"A": day_bars(breakout)}, fail=fail)
+    code, client, _ = run_from(conn, at("08:55"), {"A": day_bars(breakout)}, capital="500000", fail=fail)
     assert code == 0
     assert [m for m in sent if "실패" in m] == ["[모의투자] A 연속 5분 실패: TossError"]
     assert client.count("day", "A") == 3  # 시작 따라잡기 + 빈 분 + 마감 비교
