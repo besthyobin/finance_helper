@@ -1,4 +1,4 @@
-"""토스증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도, 하루치 1분봉 조회."""
+"""토스증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도, 1분봉·장 운영 시간 조회."""
 import json
 import time as _time
 from datetime import date, datetime, timedelta
@@ -13,6 +13,7 @@ NETWORK_DELAYS = (1, 2, 4)
 RATE_LIMIT_RETRIES = 3
 REISSUE_CODES = {"expired-token", "token-revoked", "invalid-token"}
 CANDLES_PATH = "/api/v1/candles"
+MARKET_CALENDAR_PATH = "/api/v1/market-calendar/KR"
 PAGE_SIZE = 200
 MAX_PAGES = 10
 
@@ -45,6 +46,13 @@ def _retry_after(resp):
         return float(resp.headers.get("Retry-After", 1))
     except ValueError:
         return 1
+
+
+def _to_bar(candle):
+    """캔들 한 개를 봉 시작 시각(끝나는 시각 − 1분)·Decimal 가격·int 거래량의 Bar로 바꾼다."""
+    end = datetime.fromisoformat(candle["timestamp"]).astimezone(KST)
+    return Bar(end - timedelta(minutes=1), Decimal(candle["openPrice"]), Decimal(candle["highPrice"]),
+               Decimal(candle["lowPrice"]), Decimal(candle["closePrice"]), int(Decimal(candle["volume"])))
 
 
 class TossClient:
@@ -177,17 +185,39 @@ class TossClient:
                 raise TossError("BAD_RESPONSE") from None
             reached_prev_day = False
             for c in candles:
-                end = datetime.fromisoformat(c["timestamp"]).astimezone(KST)
-                if end.date() < day:
+                bar = _to_bar(c)
+                end_date = (bar.ts + timedelta(minutes=1)).date()
+                if end_date < day:
                     reached_prev_day = True
-                elif end.date() == day:
-                    ts = end - timedelta(minutes=1)
-                    bars[ts] = Bar(ts, Decimal(c["openPrice"]), Decimal(c["highPrice"]),
-                                   Decimal(c["lowPrice"]), Decimal(c["closePrice"]),
-                                   int(Decimal(c["volume"])))
+                elif end_date == day:
+                    bars[bar.ts] = bar
             if reached_prev_day or not candles or not next_before:
                 break
             before = next_before
         else:
             raise TossError("PAGINATION")
         return [bars[ts] for ts in sorted(bars)]
+
+    def fetch_recent(self, symbol, count):
+        """최근 1분봉 count개를 받아 클라이언트 시계 기준 끝난 봉만 시작 시각 오름차순으로 반환한다."""
+        body = self._get(CANDLES_PATH, {"symbol": symbol, "interval": "1m", "count": count,
+                                        "adjusted": "false"})
+        try:
+            bars = [_to_bar(c) for c in body["result"]["candles"]]
+        except (KeyError, TypeError, AttributeError):
+            raise TossError("BAD_RESPONSE") from None
+        now = self._now()
+        return sorted((b for b in bars if b.ts + timedelta(minutes=1) <= now), key=lambda b: b.ts)
+
+    def market_hours(self, day: date):
+        """day의 정규장 (시작, 종료) KST 시각을 반환한다. 휴장이면 None."""
+        body = self._get(MARKET_CALENDAR_PATH, {"date": day.isoformat()})
+        try:
+            today = body["result"]["today"]
+            regular = (today["integrated"] or {}).get("regularMarket")
+            if today["date"] != day.isoformat() or not regular:
+                return None
+            return (datetime.fromisoformat(regular["startTime"]).astimezone(KST),
+                    datetime.fromisoformat(regular["endTime"]).astimezone(KST))
+        except (KeyError, TypeError, AttributeError, ValueError):
+            raise TossError("BAD_RESPONSE") from None

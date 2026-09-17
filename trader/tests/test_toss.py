@@ -319,3 +319,78 @@ def test_fetch_day_rejects_body_without_candles(tmp_path):
     with pytest.raises(TossError) as e:
         make_client(tmp_path, fake).fetch_day("005930", DAY)
     assert e.value.code == "BAD_RESPONSE"
+
+
+LIVE_NOW = datetime(2026, 9, 17, 11, 48, 50, tzinfo=KST)
+CAL_DAY = date(2026, 9, 17)
+
+
+def test_fetch_recent_drops_in_progress_bar(tmp_path):
+    """끝나는 시각이 지금보다 늦은 봉은 버리고, 나머지를 봉 시작 시각 오름차순 Bar로 반환한다."""
+    body = json.loads((FIXTURES / "toss_candles_live.json").read_text(encoding="utf-8"))
+    fake = FakeToss(on_get=lambda params: FakeResponse(body))
+    client = make_client(tmp_path, fake)
+    client._now = lambda: LIVE_NOW
+    bars = client.fetch_recent("005930", 3)
+    assert [b.ts for b in bars] == [datetime(2026, 9, 17, 11, 46, tzinfo=KST),
+                                    datetime(2026, 9, 17, 11, 47, tzinfo=KST)]
+    assert bars[-1] == Bar(datetime(2026, 9, 17, 11, 47, tzinfo=KST), Decimal("253000"),
+                           Decimal("253500"), Decimal("253000"), Decimal("253500"), 14357)
+    _, url, kwargs = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/candles"
+    assert kwargs["params"] == {"symbol": "005930", "interval": "1m", "count": 3, "adjusted": "false"}
+
+
+def test_fetch_recent_keeps_bar_ending_exactly_now(tmp_path):
+    """끝나는 시각이 지금과 같으면 끝난 봉으로 본다."""
+    body = json.loads((FIXTURES / "toss_candles_live.json").read_text(encoding="utf-8"))
+    client = make_client(tmp_path, FakeToss(on_get=lambda params: FakeResponse(body)))
+    client._now = lambda: datetime(2026, 9, 17, 11, 49, tzinfo=KST)
+    assert len(client.fetch_recent("005930", 3)) == 3
+
+
+def test_fetch_recent_rejects_body_without_candles(tmp_path):
+    """result.candles가 없으면 BAD_RESPONSE 예외를 낸다."""
+    client = make_client(tmp_path, FakeToss(on_get=lambda params: FakeResponse({"result": {}})))
+    with pytest.raises(TossError) as e:
+        client.fetch_recent("005930", 3)
+    assert e.value.code == "BAD_RESPONSE"
+
+
+def calendar(name):
+    """장 운영 정보 픽스처를 새 dict로 읽는다."""
+    return json.loads((FIXTURES / f"toss_calendar_{name}.json").read_text(encoding="utf-8"))
+
+
+def test_market_hours_returns_regular_session(tmp_path):
+    """영업일이면 정규장 시작·종료 시각을 KST datetime으로 반환한다."""
+    fake = FakeToss(on_get=lambda params: FakeResponse(calendar("business")))
+    assert make_client(tmp_path, fake).market_hours(CAL_DAY) == (
+        datetime(2026, 9, 17, 9, 0, tzinfo=KST), datetime(2026, 9, 17, 15, 30, tzinfo=KST))
+    _, url, kwargs = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/market-calendar/KR"
+    assert kwargs["params"] == {"date": "2026-09-17"}
+
+
+def holiday_bodies():
+    """휴장으로 봐야 하는 응답: integrated null, regularMarket null, today가 다른 날."""
+    no_regular = calendar("business")
+    no_regular["result"]["today"]["integrated"]["regularMarket"] = None
+    other_day = calendar("business")
+    other_day["result"]["today"]["date"] = "2026-09-18"
+    return [calendar("holiday"), no_regular, other_day]
+
+
+@pytest.mark.parametrize("body", holiday_bodies())
+def test_market_hours_returns_none_on_holiday(tmp_path, body):
+    """휴장 응답이면 None을 반환한다."""
+    fake = FakeToss(on_get=lambda params: FakeResponse(body))
+    assert make_client(tmp_path, fake).market_hours(CAL_DAY) is None
+
+
+def test_market_hours_rejects_bad_body(tmp_path):
+    """result.today가 없으면 BAD_RESPONSE 예외를 낸다."""
+    client = make_client(tmp_path, FakeToss(on_get=lambda params: FakeResponse({"result": {}})))
+    with pytest.raises(TossError) as e:
+        client.market_hours(CAL_DAY)
+    assert e.value.code == "BAD_RESPONSE"

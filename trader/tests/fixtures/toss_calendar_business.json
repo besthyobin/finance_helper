@@ -1,0 +1,14 @@
+{
+  "result": {
+    "today": {
+      "date": "2026-09-17",
+      "integrated": {
+        "preMarket": {"startTime": "2026-09-17T08:00:00+09:00", "singlePriceAuctionStartTime": "2026-09-17T08:50:00+09:00", "endTime": "2026-09-17T09:00:00+09:00"},
+        "regularMarket": {"startTime": "2026-09-17T09:00:00+09:00", "singlePriceAuctionStartTime": "2026-09-17T15:20:00+09:00", "endTime": "2026-09-17T15:30:00+09:00"},
+        "afterMarket": {"startTime": "2026-09-17T15:30:00+09:00", "singlePriceAuctionEndTime": "2026-09-17T15:40:00+09:00", "endTime": "2026-09-17T20:00:00+09:00"}
+      }
+    },
+    "previousBusinessDay": {"date": "2026-09-16", "integrated": null},
+    "nextBusinessDay": {"date": "2026-09-18", "integrated": null}
+  }
+}

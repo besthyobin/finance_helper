@@ -1,0 +1,7 @@
+{
+  "result": {
+    "today": {"date": "2026-09-17", "integrated": null},
+    "previousBusinessDay": {"date": "2026-09-16", "integrated": null},
+    "nextBusinessDay": {"date": "2026-09-18", "integrated": null}
+  }
+}
