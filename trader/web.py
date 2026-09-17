@@ -13,13 +13,14 @@ from dotenv import load_dotenv
 
 import store
 from bars import KST
-from paper import COSTS
+from paper import COSTS, LIVE_SOURCE
 
 ROOT = Path(__file__).resolve().parent
 PORT = 8765
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/charts.js": ("charts.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -43,8 +44,23 @@ def with_eval(row):
     return row
 
 
+def load_chart_bars(conn, symbol, day):
+    """차트용 하루 1분봉: 장중 봉(toss_live)이 있으면 그것을, 없으면 수집기 봉(toss)을 {source, bars}로 반환한다."""
+    for source in (LIVE_SOURCE, "toss"):
+        bars = store.load_bars(conn, source, day, day, [symbol]).get(symbol)
+        if bars:
+            return {"source": source, "bars": [vars(b) for b in bars]}
+    return {"source": None, "bars": []}
+
+
+def query_day(query):
+    """쿼리의 date(YYYY-MM-DD)를 날짜로 바꾼다. 없으면 오늘, 형식이 틀리면 ValueError."""
+    values = query.get("date")
+    return date.fromisoformat(values[0]) if values else datetime.now(KST).date()
+
+
 class Handler(BaseHTTPRequestHandler):
-    """GET만 처리한다. 정해진 화면 파일 3개와 API 3개 외에는 404."""
+    """GET만 처리한다. 정해진 화면 파일 4개와 API 4개 외에는 404."""
 
     def do_GET(self):
         """경로에 따라 화면 파일이나 API 응답을 보낸다."""
@@ -55,13 +71,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path == "/api/status":
                 return self._json(200, [with_eval(r) for r in self._query(store.load_paper_status)])
-            if url.path == "/api/trades":
-                values = parse_qs(url.query).get("date")
+            if url.path in ("/api/trades", "/api/bars"):
+                query = parse_qs(url.query)
                 try:
-                    day = date.fromisoformat(values[0]) if values else datetime.now(KST).date()
+                    day = query_day(query)
                 except ValueError:
                     return self._json(400, {"error": "date는 YYYY-MM-DD"})
-                return self._json(200, self._query(store.load_paper_trades, day))
+                if url.path == "/api/trades":
+                    return self._json(200, self._query(store.load_paper_trades, day))
+                symbol = query.get("symbol", [""])[0]
+                if not symbol:
+                    return self._json(400, {"error": "symbol 필요"})
+                return self._json(200, self._query(load_chart_bars, symbol, day))
             if url.path == "/api/daily":
                 return self._json(200, self._query(store.load_paper_daily))
         except psycopg.Error as e:

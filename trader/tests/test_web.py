@@ -11,7 +11,7 @@ import pytest
 import engine
 import store
 import web
-from bars import KST
+from bars import KST, Bar
 
 
 @pytest.fixture
@@ -48,10 +48,11 @@ def save_trade(conn, symbol, day, qty, pnl):
 @pytest.mark.parametrize("path, content_type, text", [
     ("/", "text/html", "모의투자"),
     ("/app.js", "text/javascript", "refresh"),
+    ("/charts.js", "text/javascript", "echarts"),
     ("/style.css", "text/css", "body"),
 ])
 def test_static_files_are_served(base, path, content_type, text):
-    """화면 파일 3개를 알맞은 Content-Type으로 준다."""
+    """화면 파일 4개를 알맞은 Content-Type으로 준다."""
     status, ctype, body = get(base + path)
     assert status == 200 and ctype.startswith(content_type) and text in body.decode("utf-8")
 
@@ -96,6 +97,33 @@ def test_daily_sums_by_day(base, conn):
         {"day": "2026-09-17", "trades": 2, "wins": 1, "pnl_krw": "70"},
         {"day": "2026-09-16", "trades": 1, "wins": 0, "pnl_krw": "-50"},
     ]
+
+
+def bar_at(day, hh, mm, close):
+    """2026-09-day HH:MM 시작, 시가=고가=저가=종가=close인 봉."""
+    p = Decimal(close)
+    return Bar(kst(day, hh, mm), p, p, p, p, 100)
+
+
+def test_bars_prefer_live_then_collected(base, conn):
+    """그날 toss_live 봉이 있으면 그것을, 없으면 수집기 toss 봉을 시각 오름차순으로 준다."""
+    store.save_bars(conn, "A", [bar_at(17, 9, 1, "101"), bar_at(17, 9, 0, "100")], source="toss_live")
+    store.save_bars(conn, "A", [bar_at(17, 9, 0, "999")], source="toss")
+    store.save_bars(conn, "A", [bar_at(16, 9, 0, "90")], source="toss")
+    today = json.loads(get(base + "/api/bars?symbol=A&date=2026-09-17")[2])
+    assert today == {"source": "toss_live", "bars": [
+        {"ts": "2026-09-17T09:00:00+09:00", "open": "100", "high": "100", "low": "100", "close": "100", "volume": 100},
+        {"ts": "2026-09-17T09:01:00+09:00", "open": "101", "high": "101", "low": "101", "close": "101", "volume": 100},
+    ]}
+    before = json.loads(get(base + "/api/bars?symbol=A&date=2026-09-16")[2])
+    assert before["source"] == "toss" and [b["close"] for b in before["bars"]] == ["90"]
+    assert json.loads(get(base + "/api/bars?symbol=B&date=2026-09-16")[2]) == {"source": None, "bars": []}
+
+
+@pytest.mark.parametrize("query", ["date=2026-09-17", "symbol=&date=2026-09-17", "symbol=A&date=2026-13-01"])
+def test_bars_bad_request(base, query):
+    """종목이 없거나 날짜 형식이 틀리면 400."""
+    assert get(base + "/api/bars?" + query)[0] == 400
 
 
 def test_db_failure_returns_500_without_connection_string(conn):

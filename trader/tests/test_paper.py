@@ -184,6 +184,9 @@ def test_full_day_saves_trade_status_and_matches_backtest(conn, sent):
     status = conn.execute("SELECT symbol, last_bar_ts, last_close, qty, entry_ts FROM paper_status ORDER BY symbol").fetchall()
     assert status == [("A", at("15:29"), Decimal("104"), 0, None), ("B", at("15:29"), Decimal("100"), 0, None)]
     assert client.count("day", "A") == 2  # 시작 따라잡기 + 마감 비교, 빈 분 없음
+    live = conn.execute("SELECT symbol, count(*), min(ts), max(ts) FROM minute_bars "
+                        "WHERE source = 'toss_live' GROUP BY symbol ORDER BY symbol").fetchall()
+    assert live == [("A", 390, at("09:00"), at("15:29")), ("B", 390, at("09:00"), at("15:29"))]
 
 
 def test_status_shows_holding_during_trade(conn, sent):
@@ -203,6 +206,7 @@ def test_restart_catches_up_without_duplicates_or_trade_alerts(conn, sent):
         code, _, _ = run_from(conn, at("10:30"), {"A": day_bars(breakout), "B": day_bars(flat)})
         assert code == 0
     assert len(saved_trades(conn)) == 1
+    assert conn.execute("SELECT count(*) FROM minute_bars WHERE source = 'toss_live'").fetchone() == (780,)
     assert not any("매수" in m or "매도" in m for m in sent)
     assert sent[0] == "[모의투자] 2026-09-17 시작(따라잡기 완료): 2종목, 보유 0종목, 거래 1건"
     assert sent[1] == SUMMARY_MATCH

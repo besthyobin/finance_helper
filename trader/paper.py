@@ -27,6 +27,7 @@ FETCH_SECOND = 15
 RECENT_COUNT = 5
 LOOP_END = time(15, 31)
 ALERT_AFTER_FAILS = 5
+LIVE_SOURCE = "toss_live"  # 장중에 받은 봉. 수집기 확정 봉(toss)과 따로 둔다
 
 log = logging.getLogger("paper")
 
@@ -111,8 +112,10 @@ class Paper:
         return new[0].ts != expected
 
     def process(self, symbol, bars, alert=True):
-        """새 봉을 DayRunner에 넣어 체결을 처리하고, 새 봉이 있었으면 상태를 저장한다."""
+        """새 봉을 차트용으로 저장하고 DayRunner에 넣어 체결을 처리한 뒤, 새 봉이 있었으면 상태를 저장한다."""
         new = self._new(symbol, bars)
+        if new:
+            store.save_bars(self.conn, symbol, new, source=LIVE_SOURCE)
         for bar in new:
             for kind, item in self.runners[symbol].step(bar):
                 if kind == "buy":

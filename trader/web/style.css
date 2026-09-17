@@ -52,5 +52,13 @@ th, td {
 
 th:first-child, td:first-child { text-align: left; }
 th { color: var(--muted); font-weight: 600; }
+.chart {
+  width: 100%;
+  height: 360px;
+  background: #fff;
+}
+
+.chart-small { height: 240px; margin-top: 12px; }
+select { font: inherit; }
 .up { color: var(--up); }
 .down { color: var(--down); }

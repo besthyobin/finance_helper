@@ -1,4 +1,4 @@
-// 모의투자 화면: 5초마다 API를 조회해 표 3개와 경고를 갱신한다.
+// 모의투자 화면: 5초마다 API를 조회해 표 3개, 차트 2개와 경고를 갱신한다.
 const REFRESH_MS = 5000;
 const STALE_MS = 2 * 60 * 1000;
 const REASONS = { signal: "신호", close_time: "15:15 청산", day_end: "장 마감" };
@@ -48,13 +48,41 @@ async function load(url) {
   return res.json();
 }
 
-/** 세 API를 조회해 표·경고·갱신 시각을 바꾼다. 실패하면 연결 끊김을 표시한다. */
+const SOURCES = { toss_live: "장중 수신 봉", toss: "수집기 확정 봉" };
+let latest = { status: [], trades: [] };
+
+/** 종목 선택 목록을 상태의 종목으로 맞춘다. 고른 종목은 유지한다. */
+function fillSymbols(status) {
+  const select = document.getElementById("symbol");
+  const symbols = status.map((s) => s.symbol);
+  if ([...select.options].map((o) => o.value).join() === symbols.join()) return;
+  const chosen = select.value;
+  select.replaceChildren(...symbols.map((sym) => new Option(sym, sym)));
+  if (symbols.includes(chosen)) select.value = chosen;
+}
+
+/** 고른 종목의 오늘 1분봉을 받아 그날 체결·보유 진입과 함께 캔들 차트를 그린다. */
+async function refreshCandles() {
+  const symbol = document.getElementById("symbol").value;
+  if (!symbol) return;
+  const { source, bars } = await load(`/api/bars?symbol=${encodeURIComponent(symbol)}`);
+  const holding = latest.status.find((s) => s.symbol === symbol && s.qty);
+  drawCandles(document.getElementById("candles"), bars,
+    latest.trades.filter((t) => t.symbol === symbol), holding);
+  document.getElementById("bars-source").textContent = source ? SOURCES[source] : "오늘 봉 없음";
+}
+
+/** API를 조회해 표·차트·경고·갱신 시각을 바꾼다. 실패하면 연결 끊김을 표시한다. */
 async function refresh() {
   const banner = document.getElementById("banner");
   try {
     const [status, trades, daily] = await Promise.all([
       load("/api/status"), load("/api/trades"), load("/api/daily"),
     ]);
+    latest = { status, trades };
+    fillSymbols(status);
+    await refreshCandles();
+    drawEquity(document.getElementById("equity"), daily);
     fill("status", status.map((s) => [
       [s.symbol], [s.qty ? `${s.qty}주` : "미보유"], [won(s.entry_price)],
       [won(s.last_close)], [won(s.eval_krw), sign(s.eval_krw)], [hm(s.last_bar_ts)],
@@ -67,12 +95,13 @@ async function refresh() {
     fill("daily", daily.map((d) => [
       [d.day], [`${d.trades}건`], [`${d.wins}건`], [won(d.pnl_krw), sign(d.pnl_krw)],
     ]));
-    const latest = Math.max(0, ...status.map((s) => Date.parse(s.updated_at)));
-    const stale = marketOpen(new Date()) && Date.now() - latest > STALE_MS;
+    const lastUpdate = Math.max(0, ...status.map((s) => Date.parse(s.updated_at)));
+    const stale = marketOpen(new Date()) && Date.now() - lastUpdate > STALE_MS;
     banner.textContent = stale ? "모의투자 프로세스 멈춤 (2분 넘게 갱신 없음)" : "";
     banner.hidden = !stale;
     document.getElementById("updated").textContent = new Date().toLocaleTimeString("ko-KR");
   } catch (err) {
+    console.error(err);
     banner.textContent = "연결 끊김: web.py가 실행 중인지 확인하세요";
     banner.hidden = false;
   } finally {
@@ -80,4 +109,6 @@ async function refresh() {
   }
 }
 
+// 종목을 바꾸면 다음 갱신을 기다리지 않고 캔들 차트만 다시 그린다
+document.getElementById("symbol").addEventListener("change", () => refreshCandles().catch(() => {}));
 refresh();

@@ -22,6 +22,11 @@
   </section>
 
   <section>
+    <h2>1분봉 <select id="symbol" aria-label="종목"></select> <span class="muted" id="bars-source"></span></h2>
+    <div id="candles" class="chart"></div>
+  </section>
+
+  <section>
     <h2>오늘 체결</h2>
     <table>
       <thead><tr><th>종목</th><th>수량</th><th>진입</th><th>매수가</th><th>청산</th><th>매도가</th><th>손익</th><th>수익률</th><th>사유</th></tr></thead>
@@ -35,8 +40,11 @@
       <thead><tr><th>날짜</th><th>거래</th><th>수익 거래</th><th>손익</th></tr></thead>
       <tbody id="daily"></tbody>
     </table>
+    <div id="equity" class="chart chart-small"></div>
   </section>
 
+  <script src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js"></script>
+  <script src="/charts.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
