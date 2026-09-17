@@ -252,6 +252,24 @@ def test_send_mail_swallows_errors_without_leaking_password(smtp, caplog):
     assert "APPSECRET" not in caplog.text
 
 
+def test_send_mail_swallows_non_ascii_password_error(monkeypatch, caplog):
+    """앱 비밀번호에 한글이 섞여 로그인 인코딩이 실패해도 예외 없이 로그만 남긴다."""
+    monkeypatch.setenv("GMAIL_ADDRESS", "me@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd에fghijk")
+
+    class EncodingSMTP(FakeSMTP):
+        def login(self, user, password):
+            """smtplib처럼 비ASCII 인증 문자열에서 UnicodeEncodeError를 낸다."""
+            f"\0{user}\0{password}".encode("ascii")
+
+    FakeSMTP.instances = []
+    monkeypatch.setattr(notify.smtplib, "SMTP_SSL", EncodingSMTP)
+    with caplog.at_level(logging.ERROR):
+        notify.send_mail("hi")
+    assert "메일 전송 실패: UnicodeEncodeError" in caplog.text
+    assert "abcd에fghijk" not in caplog.text
+
+
 def test_send_mail_skips_without_settings(monkeypatch, caplog):
     """Gmail 설정이 없으면 접속하지 않고 경고만 남긴다."""
     monkeypatch.delenv("GMAIL_ADDRESS", raising=False)

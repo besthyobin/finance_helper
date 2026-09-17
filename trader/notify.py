@@ -25,6 +25,7 @@ def send_mail(text):
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10) as smtp:
             smtp.login(address, password)
             smtp.send_message(msg)
-    except (smtplib.SMTPException, OSError) as e:
+    except Exception as e:
+        # 알림 실패가 수집·모의투자를 멈추면 안 되므로 모든 예외를 삼킨다(비ASCII 비밀번호는 UnicodeEncodeError).
         # 예외 문자열에 계정 정보가 섞일 수 있어 종류만 남긴다
         log.error("메일 전송 실패: %s", type(e).__name__)
