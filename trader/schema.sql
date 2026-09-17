@@ -56,3 +56,30 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     exit_reason  text        NOT NULL CHECK (exit_reason IN ('signal', 'close_time', 'day_end')),
     PRIMARY KEY (run_id, symbol, entry_ts)
 );
+
+-- 종목별 모의투자 현재 상태. paper.py가 새 봉을 처리할 때마다 덮어쓴다
+CREATE TABLE IF NOT EXISTS paper_status (
+    symbol       text        PRIMARY KEY,
+    trade_date   date        NOT NULL,
+    last_bar_ts  timestamptz,           -- 마지막으로 받은 봉 시작 시각
+    last_close   numeric,
+    qty          int         NOT NULL,  -- 0이면 미보유
+    entry_ts     timestamptz,           -- 진입 체결 봉 시각
+    entry_price  numeric,               -- 슬리피지 반영 매수가
+    updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- 완결된 모의 거래. 재시작 따라잡기로 같은 거래가 다시 오면 덮어쓴다
+CREATE TABLE IF NOT EXISTS paper_trades (
+    symbol       text        NOT NULL,
+    strategy     text        NOT NULL,
+    entry_ts     timestamptz NOT NULL,
+    qty          int         NOT NULL,
+    entry_price  numeric     NOT NULL,  -- 슬리피지 반영 매수가
+    exit_ts      timestamptz NOT NULL,
+    exit_price   numeric     NOT NULL,  -- 슬리피지 반영 매도가
+    pnl_krw      numeric     NOT NULL,  -- qty × (exit_price × (1 − fee − tax) − entry_price × (1 + fee))
+    return_pct   numeric     NOT NULL,  -- 비용 반영 수익률(%)
+    exit_reason  text        NOT NULL CHECK (exit_reason IN ('signal', 'close_time', 'day_end')),
+    PRIMARY KEY (symbol, entry_ts)
+);

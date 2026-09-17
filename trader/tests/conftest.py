@@ -17,5 +17,5 @@ def conn():
         pytest.fail("trader/.env에 TEST_DATABASE_URL을 설정하세요")
     with psycopg.connect(url, autocommit=True) as c:
         c.execute((ROOT / "schema.sql").read_text(encoding="utf-8"))
-        c.execute("TRUNCATE minute_bars, collect_runs, backtest_runs CASCADE")
+        c.execute("TRUNCATE minute_bars, collect_runs, backtest_runs, paper_status, paper_trades CASCADE")
         yield c

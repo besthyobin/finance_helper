@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -144,3 +144,61 @@ def test_save_run_rolls_back_on_trade_error(conn):
     with pytest.raises(psycopg.errors.UniqueViolation):
         store.save_run(conn, run_info(), [trade(0), trade(0)])
     assert conn.execute("SELECT count(*) FROM backtest_runs").fetchone()[0] == 0
+
+
+def paper_status_row(**changes):
+    """미보유 상태의 paper_status 행 dict를 만들고 changes로 덮어쓴다."""
+    row = {"symbol": "A", "trade_date": date(2026, 9, 17),
+           "last_bar_ts": datetime(2026, 9, 17, 9, 0, tzinfo=KST), "last_close": Decimal("100"),
+           "qty": 0, "entry_ts": None, "entry_price": None}
+    return {**row, **changes}
+
+
+def test_schema_creates_paper_tables(conn):
+    """스키마 적용 후 모의투자 테이블 두 개가 존재한다."""
+    rows = conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+    ).fetchall()
+    assert {"paper_status", "paper_trades"} <= {r[0] for r in rows}
+
+
+def test_save_paper_status_upserts(conn):
+    """같은 종목 상태를 다시 저장하면 덮어쓰고 updated_at이 채워진다."""
+    store.save_paper_status(conn, paper_status_row())
+    row = paper_status_row(qty=10, last_close=Decimal("104"),
+                           entry_ts=datetime(2026, 9, 17, 9, 41, tzinfo=KST), entry_price=Decimal("101.0505"))
+    store.save_paper_status(conn, row)
+    [got] = store.load_paper_status(conn)
+    assert {k: got[k] for k in row} == row
+    assert got["updated_at"] is not None
+
+
+def paper_trade(symbol, exit_ts):
+    """exit_ts에 청산한 20분짜리 모의 거래를 만든다."""
+    return engine.Trade(symbol, exit_ts - timedelta(minutes=20), Decimal("101.0505"), exit_ts,
+                        Decimal("103.948"), Decimal("2.63"), "signal")
+
+
+def test_save_paper_trade_overwrites_same_entry(conn):
+    """같은 (종목, 진입 시각) 거래를 다시 저장하면 덮어쓴다."""
+    t = paper_trade("A", datetime(2026, 9, 17, 10, 1, tzinfo=KST))
+    store.save_paper_trade(conn, "orb", 10, t, Decimal("100"))
+    store.save_paper_trade(conn, "orb", 12, t, Decimal("120"))
+    [got] = store.load_paper_trades(conn, date(2026, 9, 17))
+    assert (got["symbol"], got["strategy"], got["qty"], got["pnl_krw"], got["exit_reason"]) == (
+        "A", "orb", 12, Decimal("120"), "signal")
+    assert (got["entry_ts"], got["entry_price"], got["exit_price"], got["return_pct"]) == (
+        t.entry_ts, Decimal("101.0505"), Decimal("103.948"), Decimal("2.63"))
+
+
+def test_load_paper_trades_and_daily_use_kst_dates(conn):
+    """거래 조회와 일별 합계는 청산 시각의 KST 날짜로 묶는다(UTC 전날 15:30 = KST 00:30)."""
+    store.save_paper_trade(conn, "orb", 1, paper_trade("A", datetime(2026, 9, 16, 15, 0, tzinfo=KST)), Decimal("-50"))
+    store.save_paper_trade(conn, "orb", 1, paper_trade("A", datetime(2026, 9, 17, 0, 30, tzinfo=KST)), Decimal("100"))
+    store.save_paper_trade(conn, "orb", 1, paper_trade("B", datetime(2026, 9, 17, 10, 1, tzinfo=KST)), Decimal("-30"))
+    assert [(r["symbol"], r["pnl_krw"]) for r in store.load_paper_trades(conn, date(2026, 9, 17))] == [
+        ("A", Decimal("100")), ("B", Decimal("-30"))]
+    assert store.load_paper_daily(conn) == [
+        {"day": date(2026, 9, 17), "trades": 2, "wins": 1, "pnl_krw": Decimal("70")},
+        {"day": date(2026, 9, 16), "trades": 1, "wins": 0, "pnl_krw": Decimal("-50")},
+    ]
