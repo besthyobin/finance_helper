@@ -73,8 +73,8 @@ class Handler(BaseHTTPRequestHandler):
         """요청마다 콘솔에 찍는 기본 로그를 끈다(화면이 5초마다 조회한다)."""
 
     def _query(self, fn, *args):
-        """요청마다 DB에 새로 연결해 store 조회 함수를 실행한다."""
-        with psycopg.connect(self.server.db_url, autocommit=True) as conn:
+        """요청마다 DB에 새로 연결해 store 조회 함수를 실행한다. 접속은 최대 3초까지만 기다린다."""
+        with psycopg.connect(self.server.db_url, autocommit=True, connect_timeout=3) as conn:
             return fn(conn, *args)
 
     def _json(self, status, body):

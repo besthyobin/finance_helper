@@ -75,8 +75,9 @@ async function refresh() {
   } catch (err) {
     banner.textContent = "연결 끊김: web.py가 실행 중인지 확인하세요";
     banner.hidden = false;
+  } finally {
+    setTimeout(refresh, REFRESH_MS);
   }
 }
 
 refresh();
-setInterval(refresh, REFRESH_MS);
