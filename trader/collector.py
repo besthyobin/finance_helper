@@ -42,8 +42,9 @@ def target_days(now):
     return [d for d in days if d.weekday() < 5]
 
 
-def collect(conn, client, symbols, days):
-    """종목마다 완료되지 않은 날짜를 최신순으로 수집·기록하고 (종목별 상태 개수, 실패 목록)을 반환한다."""
+def collect(conn, client, symbols, days, stop=None):
+    """종목마다 완료되지 않은 날짜를 최신순으로 수집·기록하고 (종목별 상태 개수, 실패 목록)을 반환한다.
+    stop이 주어지면 날짜를 요청하기 전마다 확인해 참이면 남은 날짜·종목을 멈추고 바로 반환한다."""
     counts, failures = {}, []
     for symbol in symbols:
         done = store.done_days(conn, symbol)
@@ -51,6 +52,10 @@ def collect(conn, client, symbols, days):
         c = counts[symbol] = {"ok": 0, "empty": 0, "error": 0, "skipped": 0}
         streak = 0
         for i, day in enumerate(todo):
+            if stop and stop():
+                c["skipped"] = len(todo) - i
+                log.warning("%s 중단 요청, 남은 %d일 건너뜀", symbol, c["skipped"])
+                return counts, failures
             if streak >= MAX_CONSECUTIVE_ERRORS:
                 c["skipped"] = len(todo) - i
                 log.error("%s 연속 오류 %d회, 남은 %d일 건너뜀", symbol, streak, c["skipped"])

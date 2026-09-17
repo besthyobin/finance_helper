@@ -202,3 +202,21 @@ def test_load_paper_trades_and_daily_use_kst_dates(conn):
         {"day": date(2026, 9, 17), "trades": 2, "wins": 1, "pnl_krw": Decimal("70")},
         {"day": date(2026, 9, 16), "trades": 1, "wins": 0, "pnl_krw": Decimal("-50")},
     ]
+
+
+def candidate(symbol, status, reason=None, **metrics):
+    """선정 결과 행 dict를 만든다."""
+    return {"symbol": symbol, "name": f"종목{symbol}", "rank": 3, "status": status, "reason": reason,
+            "metrics": metrics}
+
+
+def test_save_candidates_replaces_same_day_and_keeps_other_days(conn):
+    """같은 날 결과는 지우고 다시 쓰고, 다른 날 결과는 그대로 두며 Decimal·date는 문자열로 저장한다."""
+    day, prev = date(2026, 9, 18), date(2026, 9, 17)
+    store.save_candidates(conn, prev, [candidate("X", "selected")])
+    store.save_candidates(conn, day, [candidate("A", "rejected", "공매도"), candidate("B", "passed")])
+    store.save_candidates(conn, day, [candidate("A", "selected", close=Decimal("50000"), day=date(2026, 9, 17))])
+    [row] = store.load_candidates(conn, day)
+    assert (row["symbol"], row["name"], row["rank"], row["status"], row["reason"]) == ("A", "종목A", 3, "selected", None)
+    assert row["metrics"] == {"close": "50000", "day": "2026-09-17"}
+    assert [r["symbol"] for r in store.load_candidates(conn, prev)] == ["X"]

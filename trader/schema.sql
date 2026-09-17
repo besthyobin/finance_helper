@@ -83,3 +83,15 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     exit_reason  text        NOT NULL CHECK (exit_reason IN ('signal', 'close_time', 'day_end')),
     PRIMARY KEY (symbol, entry_ts)
 );
+
+-- 매일 종목 선정 결과. 같은 날 재실행하면 덮어쓴다
+CREATE TABLE IF NOT EXISTS selection_candidates (
+    run_date   date    NOT NULL,
+    symbol     text    NOT NULL,
+    name       text    NOT NULL,
+    rank       int     NOT NULL,          -- 거래대금 1년 순위
+    status     text    NOT NULL CHECK (status IN ('selected', 'passed', 'rejected')),
+    reason     text,                      -- rejected일 때 제외 사유
+    metrics    jsonb   NOT NULL,          -- 위험 지표, 기술지표, 두 구간 백테스트 수치
+    PRIMARY KEY (run_date, symbol)
+);

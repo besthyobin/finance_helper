@@ -128,6 +128,16 @@ def test_collect_propagates_auth_error_without_record(conn):
     assert client.fetched == [("A", DAY)]
 
 
+def test_collect_stops_before_next_day_when_stop_returns_true(conn):
+    """stop()이 참이 되면 다음 날짜와 남은 종목을 요청하지 않고 지금까지의 결과를 반환한다."""
+    days = [DAY, PREV_DAY, date(2026, 9, 10)]
+    client = FakeClient({(s, d): bars(d, 1) for s in ("A", "B") for d in days})
+    counts, failures = collector.collect(conn, client, ["A", "B"], days, stop=lambda: len(client.fetched) >= 2)
+    assert client.fetched == [("A", DAY), ("A", PREV_DAY)]
+    assert counts == {"A": {"ok": 2, "empty": 0, "error": 0, "skipped": 1}}
+    assert failures == []
+
+
 def test_format_alert_lists_up_to_20_failures():
     """실패가 20건을 넘으면 20줄만 쓰고 나머지는 개수로 적는다."""
     failures = [(f"{i:06d}", DAY, "HTTP500") for i in range(25)]

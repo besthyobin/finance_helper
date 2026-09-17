@@ -1,5 +1,7 @@
-"""minute_bars·collect_runs·backtest·paper 테이블 저장과 조회."""
+"""minute_bars·collect_runs·backtest·paper·selection 테이블 저장과 조회."""
+import json
 from datetime import datetime, time, timedelta
+from functools import partial
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -124,4 +126,28 @@ def load_paper_daily(conn):
             "SELECT (exit_ts AT TIME ZONE 'Asia/Seoul')::date AS day, count(*)::int AS trades, "
             "(count(*) FILTER (WHERE pnl_krw > 0))::int AS wins, sum(pnl_krw) AS pnl_krw "
             "FROM paper_trades GROUP BY 1 ORDER BY 1 DESC"
+        ).fetchall()
+
+
+_dumps = partial(json.dumps, default=str, ensure_ascii=False)
+
+
+def save_candidates(conn, run_date, rows):
+    """그날 종목 선정 결과를 한 트랜잭션으로 지우고 다시 저장한다. metrics의 Decimal·date는 문자열로 저장한다."""
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM selection_candidates WHERE run_date = %s", (run_date,))
+        cur.executemany(
+            "INSERT INTO selection_candidates (run_date, symbol, name, rank, status, reason, metrics) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            [(run_date, r["symbol"], r["name"], r["rank"], r["status"], r["reason"], Jsonb(r["metrics"], dumps=_dumps))
+             for r in rows],
+        )
+
+
+def load_candidates(conn, run_date):
+    """그날 종목 선정 결과를 symbol 오름차순 dict 목록으로 반환한다."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "SELECT symbol, name, rank, status, reason, metrics FROM selection_candidates "
+            "WHERE run_date = %s ORDER BY symbol", (run_date,),
         ).fetchall()
