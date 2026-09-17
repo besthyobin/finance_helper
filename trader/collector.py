@@ -119,12 +119,12 @@ def main(now=None):
     except Exception as e:
         # 예외 문자열에 접속 문자열 등이 섞일 수 있어 종류와 토스 오류 코드만 남긴다
         log.error("실행 실패: %s %s", type(e).__name__, e.code if isinstance(e, TossError) else "")
-        notify.send_telegram(f"[수집기] {now.date()} 실행 실패: {type(e).__name__}")
+        notify.send_mail(f"[수집기] {now.date()} 실행 실패: {type(e).__name__}")
         return 1
     total = {k: sum(c[k] for c in counts.values()) for k in ("ok", "empty", "error", "skipped")}
     log.info("요약 ok %(ok)d / empty %(empty)d / error %(error)d / skipped %(skipped)d", total)
     if failures:
-        notify.send_telegram(format_alert(now.date(), failures))
+        notify.send_mail(format_alert(now.date(), failures))
     return 0
 
 

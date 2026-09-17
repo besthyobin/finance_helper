@@ -87,7 +87,7 @@ class Paper:
             self.fails[symbol] += 1
             log.error("%s 조회·처리 실패 %d회: %s %s", symbol, self.fails[symbol], type(e).__name__, e.code)
             if self.fails[symbol] == ALERT_AFTER_FAILS:
-                notify.send_telegram(f"[모의투자] {symbol} 연속 {ALERT_AFTER_FAILS}분 실패: {type(e).__name__}")
+                notify.send_mail(f"[모의투자] {symbol} 연속 {ALERT_AFTER_FAILS}분 실패: {type(e).__name__}")
         except Exception as e:
             # ponytail: 처리 중 DB 저장 등이 실패하면 runner는 앞서 나가고 그 거래는 저장되지 않는다.
             # 재시작 따라잡기로 복구되니, 알림을 보고 재시작할 것. 알림은 연속 실패가 계속되는 동안
@@ -95,7 +95,7 @@ class Paper:
             self.errors[symbol] += 1
             log.exception("%s 처리 실패: %s", symbol, type(e).__name__)
             if self.errors[symbol] == 1:
-                notify.send_telegram(f"[모의투자] {symbol} 처리 실패: {type(e).__name__}, DB·코드 확인 후 재시작 필요")
+                notify.send_mail(f"[모의투자] {symbol} 처리 실패: {type(e).__name__}, DB·코드 확인 후 재시작 필요")
 
     def _new(self, symbol, bars):
         """마지막으로 받은 봉 이후의 봉만 반환한다."""
@@ -135,7 +135,7 @@ class Paper:
             return
         log.info("%s %s 매수 %d주 @ %s", symbol, bar.ts, qty, price)
         if alert:
-            notify.send_telegram(f"[모의투자] 매수 {symbol} {qty}주 @ {price:,.0f}원 ({bar.ts:%H:%M})")
+            notify.send_mail(f"[모의투자] 매수 {symbol} {qty}주 @ {price:,.0f}원 ({bar.ts:%H:%M})")
 
     def _sell(self, symbol, trade, alert):
         """청산 체결: 비교용 거래에 더하고, 수량이 있으면 원화 손익과 함께 저장·알린다."""
@@ -148,7 +148,7 @@ class Paper:
         self.saved.append((symbol, pnl))
         log.info("%s %s 매도 %d주 @ %s 손익 %s", symbol, trade.exit_ts, qty, trade.exit_price, pnl)
         if alert:
-            notify.send_telegram(
+            notify.send_mail(
                 f"[모의투자] 매도 {symbol} {qty}주 @ {trade.exit_price:,.0f}원 ({trade.exit_ts:%H:%M}) "
                 f"손익 {pnl:+,.0f}원 ({trade.return_pct:+.2f}%)")
 
@@ -209,7 +209,7 @@ def run(client, conn, symbols, capital, now=lambda: datetime.now(KST), sleep=_ti
     start, end = hours
     if (start.time(), end.time()) != (REGULAR_OPEN, REGULAR_CLOSE):
         log.warning("%s 정규장 시간 변경일 %s~%s", today, start, end)
-        notify.send_telegram(f"[모의투자] {today} 정규장 시간 변경일({start:%H:%M}~{end:%H:%M}), 모의투자 안 함")
+        notify.send_mail(f"[모의투자] {today} 정규장 시간 변경일({start:%H:%M}~{end:%H:%M}), 모의투자 안 함")
         return 0
 
     paper = Paper(conn, symbols, capital, today)
@@ -217,7 +217,7 @@ def run(client, conn, symbols, capital, now=lambda: datetime.now(KST), sleep=_ti
         # 아직 바뀔 수 있는 진행 중 봉을 따라잡기가 가져가지 않도록 FETCH_SECOND초 이전 시각을 쓴다
         paper.poll(client, symbol, now() - timedelta(seconds=FETCH_SECOND), catch_up=True)
     held = sum(1 for s in symbols if paper.status_row(s)["qty"])
-    notify.send_telegram(f"[모의투자] {today} 시작(따라잡기 완료): {len(symbols)}종목, "
+    notify.send_mail(f"[모의투자] {today} 시작(따라잡기 완료): {len(symbols)}종목, "
                          f"보유 {held}종목, 거래 {len(paper.saved)}건")
 
     while True:
@@ -231,7 +231,7 @@ def run(client, conn, symbols, capital, now=lambda: datetime.now(KST), sleep=_ti
     loop_end = datetime.combine(today, LOOP_END, KST)
     if now() < loop_end:
         sleep(max(0, (loop_end - now()).total_seconds()))
-    notify.send_telegram(paper.close(client, now()))
+    notify.send_mail(paper.close(client, now()))
     return 0
 
 
@@ -268,7 +268,7 @@ def main(now=None):
     except Exception as e:
         # 예외 문자열에 접속 문자열 등이 섞일 수 있어 종류와 토스 오류 코드만 남긴다
         log.error("실행 실패: %s %s", type(e).__name__, e.code if isinstance(e, TossError) else "")
-        notify.send_telegram(f"[모의투자] {now.date()} 실행 실패: {type(e).__name__}")
+        notify.send_mail(f"[모의투자] {now.date()} 실행 실패: {type(e).__name__}")
         return 1
 
 

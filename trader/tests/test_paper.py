@@ -106,9 +106,9 @@ class FakeClient:
 
 @pytest.fixture
 def sent(monkeypatch):
-    """텔레그램 전송 대신 메시지를 목록에 기록한다."""
+    """메일 전송 대신 메시지를 목록에 기록한다."""
     messages = []
-    monkeypatch.setattr(paper.notify, "send_telegram", messages.append)
+    monkeypatch.setattr(paper.notify, "send_mail", messages.append)
     return messages
 
 

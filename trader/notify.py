@@ -1,23 +1,30 @@
-"""텔레그램 알림 전송."""
+"""Gmail 메일 알림 전송."""
 import logging
 import os
-
-import requests
+import smtplib
+from email.message import EmailMessage
 
 log = logging.getLogger(__name__)
 
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465
 
-def send_telegram(text):
-    """TELEGRAM_BOT_TOKEN·TELEGRAM_CHAT_ID로 메시지 1통을 보낸다. 실패해도 예외를 올리지 않는다."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        log.warning("텔레그램 설정이 없어 알림을 보내지 않음")
+
+def send_mail(text):
+    """GMAIL_ADDRESS·GMAIL_APP_PASSWORD로 나에게 메일 1통을 보낸다. 첫 줄이 제목이고, 실패해도 예외를 올리지 않는다."""
+    address = os.environ.get("GMAIL_ADDRESS")
+    password = os.environ.get("GMAIL_APP_PASSWORD")
+    if not address or not password:
+        log.warning("메일 설정이 없어 알림을 보내지 않음")
         return
+    msg = EmailMessage()
+    msg["From"] = msg["To"] = address
+    msg["Subject"] = text.splitlines()[0] if text else "(알림)"
+    msg.set_content(text)
     try:
-        resp = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                             json={"chat_id": chat_id, "text": text}, timeout=10)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        # 예외 문자열에 토큰이 든 URL이 포함되므로 종류만 남긴다
-        log.error("텔레그램 전송 실패: %s", type(e).__name__)
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10) as smtp:
+            smtp.login(address, password)
+            smtp.send_message(msg)
+    except (smtplib.SMTPException, OSError) as e:
+        # 예외 문자열에 계정 정보가 섞일 수 있어 종류만 남긴다
+        log.error("메일 전송 실패: %s", type(e).__name__)
