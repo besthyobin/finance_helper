@@ -108,3 +108,30 @@ def test_run_splits_days_and_uses_fresh_strategy():
     trades = engine.run(BuyFirst, {}, {"A": day1 + day2}, NO_COST)
     assert [(t.entry_ts, t.exit_ts, t.exit_reason) for t in trades] == [
         (day1[1].ts, day1[1].ts, "day_end"), (day2[1].ts, day2[1].ts, "day_end")]
+
+
+def test_day_runner_step_by_step_matches_run_day():
+    """봉을 하나씩 넣은 DayRunner 이벤트가 run_day 거래와 같고, exit_at 이후 봉은 이벤트 없이 last_bar만 갱신한다."""
+    prices = [(str(p), str(p)) for p in range(100, 107)]
+    bars = bars_from("15:10", prices)
+    runner = engine.DayRunner("A", Script({0: "buy"}), NO_COST)
+    events = [runner.step(b) for b in bars]
+    assert events[1] == [("buy", bars[1])]
+    sells = [e for events_of_bar in events for e in events_of_bar if e[0] == "sell"]
+    assert [t for _, t in sells] == engine.run_day("A", Script({0: "buy"}), bars, NO_COST)
+    assert sells[0][1].exit_reason == "close_time"
+    assert events[6] == []
+    assert runner.done and runner.holding is None and runner.last_bar == bars[6]
+    assert runner.finish() is None
+
+
+def test_day_runner_finish_closes_at_last_close():
+    """exit_at 전에 봉이 끝나면 finish가 마지막 봉 종가로 day_end 청산하고 이후 None을 반환한다."""
+    bars = bars_from("14:57", [("100", "100"), ("101", "101"), ("102", "105")])
+    runner = engine.DayRunner("A", Script({0: "buy"}), NO_COST)
+    for b in bars:
+        runner.step(b)
+    assert runner.holding == bars[1] and not runner.done
+    trade = runner.finish()
+    assert (trade.exit_ts, trade.exit_price, trade.exit_reason) == (bars[2].ts, Decimal("105"), "day_end")
+    assert runner.holding is None and runner.finish() is None
