@@ -1,7 +1,7 @@
-# 토스증권 1분봉 수집기와 백테스터
+# 토스증권 1분봉 수집기, 백테스터, 모의투자
 
-`symbols.txt` 종목의 1분봉을 토스증권 Open API에서 받아 PostgreSQL에 저장하고, 저장한 봉으로 전략을 백테스트한다.
-설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`
+`symbols.txt` 종목의 1분봉을 토스증권 Open API에서 받아 PostgreSQL에 저장하고, 저장한 봉으로 전략을 백테스트하고, 장중 실시간 봉으로 모의투자한다.
+설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`, `docs/superpowers/specs/2026-09-17-paper-trader-design.md`
 
 ## 설치
 
@@ -118,6 +118,39 @@ FROM backtest_trades
 WHERE run_id = 1
 GROUP BY 1, 2
 ORDER BY 1, 2;
+```
+
+## 모의투자
+
+```powershell
+.\.venv\Scripts\python paper.py
+```
+
+`paper_symbols.txt` 종목을 orb 기본 파라미터로 장중 가상 체결한다. 실주문은 하지 않는다.
+
+- 설정: `.env`의 `PAPER_CAPITAL`(모의 총액, 예 2000000). 종목당 금액 = 총액 ÷ 종목 수, 수량은 슬리피지 반영 매수가로 나눈 정수 주(내림). 0주면 거래하지 않는다
+- 비용: 수수료 0.015%, 매도세 0.20%, 슬리피지 0.05%, 15:15 강제 청산, 정규장 봉만 (백테스트 기본값과 같음)
+- 흐름: 휴장·정규장 시간 변경일이면 바로 종료 → 오늘 이미 끝난 봉으로 따라잡기 → 매분 :15초에 끝난 봉 조회 → 15:31에 오늘 봉으로 백테스트를 다시 돌려 실시간 거래와 비교 → 텔레그램 요약 후 종료
+- 알림: 시작(따라잡기 완료), 매수·매도 체결, 같은 종목 5분 연속 조회 실패, 일일 요약(마감 비교 `일치`/`불일치`). 재시작 따라잡기 중 체결은 다시 알리지 않는다
+- 기록: `paper_status`(종목별 현재 상태), `paper_trades`(완결 거래). 중간에 꺼졌다 다시 켜면 같은 상태로 복구되고 거래는 중복 저장되지 않는다
+- 로그: `logs/paper-YYYY-MM-DD.log`
+- 토스 토큰은 클라이언트당 1개라 장중(08:55~15:31)에는 `collector.py`를 수동 실행하지 않는다
+
+작업 스케줄러 등록(관리자 PowerShell, `trader` 폴더 기준):
+
+```powershell
+$dir = (Get-Location).Path
+$action = New-ScheduledTaskAction -Execute "$dir\.venv\Scripts\python.exe" -Argument "paper.py" -WorkingDirectory $dir
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 08:55
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 8)
+Register-ScheduledTask -TaskName "토스 모의투자" -Action $action -Trigger $trigger -Settings $settings
+```
+
+거래 확인:
+
+```sql
+SELECT (exit_ts AT TIME ZONE 'Asia/Seoul')::date AS day, symbol, qty, entry_price, exit_price, pnl_krw, exit_reason
+FROM paper_trades ORDER BY exit_ts DESC LIMIT 20;
 ```
 
 ## 첫 실행 수동 검증 (1회)

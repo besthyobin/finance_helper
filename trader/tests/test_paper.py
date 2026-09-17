@@ -1,3 +1,5 @@
+import logging
+import os
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -253,3 +255,38 @@ def test_db_failure_while_processing_alerts_immediately(conn, sent, monkeypatch)
     assert code == 0
     assert sent.count("[모의투자] A 처리 실패: RuntimeError, DB·코드 확인 후 재시작 필요") == 1
     assert not any("연속 5분 실패" in m for m in sent)
+
+
+@pytest.fixture
+def main_env(monkeypatch, sent):
+    """main 실행 환경: .env 읽기를 막고 필수 값과 종목을 채운 뒤 알림 목록을 반환한다."""
+    monkeypatch.setattr(paper, "load_dotenv", lambda *args, **kwargs: None)
+    for key in paper.REQUIRED_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("TOSS_CLIENT_ID", "CID-X")
+    monkeypatch.setenv("TOSS_CLIENT_SECRET", "SECRET-X")
+    monkeypatch.setenv("PAPER_CAPITAL", "2000000")
+    monkeypatch.setattr(paper, "read_symbols", lambda path: ["A"])
+    return sent
+
+
+def test_main_missing_env_fails_without_secrets(main_env, monkeypatch, caplog):
+    """설정이 빠지면 1을 반환하고 로그·알림에는 변수 이름과 예외 종류만 남긴다."""
+    monkeypatch.delenv("PAPER_CAPITAL")
+    monkeypatch.setenv("DATABASE_URL", "SECRETPW")
+    with caplog.at_level(logging.INFO):
+        assert paper.main(at("08:55")) == 1
+    assert ".env 누락: PAPER_CAPITAL" in caplog.text
+    assert "SECRET-X" not in caplog.text and "SECRETPW" not in caplog.text
+    assert main_env == ["[모의투자] 2026-09-17 실행 실패: RuntimeError"]
+
+
+def test_main_auth_error_returns_1(conn, main_env, monkeypatch):
+    """인증 오류면 실행 실패 알림을 보내고 1을 반환하며, 토스 기본 설정으로 클라이언트를 만든다."""
+    monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    created = []
+    fake = FakeClient(Clock(at("08:55")), {"A": []}, hours=TossAuthError("access_denied"))
+    monkeypatch.setattr(paper, "TossClient", lambda *args: created.append(args[:4]) or fake)
+    assert paper.main(at("08:55")) == 1
+    assert main_env == ["[모의투자] 2026-09-17 실행 실패: TossAuthError"]
+    assert created == [("CID-X", "SECRET-X", "https://openapi.tossinvest.com", 15.0)]

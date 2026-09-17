@@ -1,17 +1,26 @@
 """장중 모의투자 진입점. 작업 스케줄러가 평일 08:55에 실행하고, 매분 끝난 1분봉으로 orb 전략을 가상 체결한다."""
 import logging
+import os
+import sys
 import time as _time
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from pathlib import Path
+
+import psycopg
+from dotenv import load_dotenv
 
 import engine
 import notify
 import store
 from backtest import REGULAR_CLOSE, REGULAR_OPEN
 from bars import KST
-from collector import read_symbols  # noqa: F401  main에서 사용
+from collector import read_symbols
 from strategies import Orb
-from toss import TossAuthError, TossClient, TossError  # noqa: F401  TossClient는 main에서 사용
+from toss import TossAuthError, TossClient, TossError
+
+ROOT = Path(__file__).resolve().parent
+REQUIRED_ENV = ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET", "DATABASE_URL", "PAPER_CAPITAL")
 
 COSTS = engine.Costs(Decimal("0.00015"), Decimal("0.002"), Decimal("0.0005"), time(15, 15))
 FETCH_SECOND = 15
@@ -214,3 +223,44 @@ def run(client, conn, symbols, capital, now=lambda: datetime.now(KST), sleep=_ti
         sleep(max(0, (loop_end - now()).total_seconds()))
     notify.send_telegram(paper.close(client, now()))
     return 0
+
+
+def setup_logging(today):
+    """콘솔과 logs/paper-YYYY-MM-DD.log에 로그를 남기도록 설정한다."""
+    (ROOT / "logs").mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler(),
+                  logging.FileHandler(ROOT / "logs" / f"paper-{today}.log", encoding="utf-8")],
+    )
+
+
+def main(now=None):
+    """모의투자 1일 실행. 정상·휴장이면 0, 설정·DB·인증 등 실행 전체 실패면 1을 반환한다."""
+    now = now or datetime.now(KST)
+    load_dotenv(ROOT / ".env")
+    setup_logging(now.date())
+    try:
+        missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+        if missing:
+            log.error(".env 누락: %s", ", ".join(missing))
+            raise RuntimeError("missing env")
+        capital = Decimal(os.environ["PAPER_CAPITAL"])
+        symbols = read_symbols(ROOT / "paper_symbols.txt")
+        client = TossClient(
+            os.environ["TOSS_CLIENT_ID"], os.environ["TOSS_CLIENT_SECRET"],
+            os.environ.get("TOSS_BASE_URL") or "https://openapi.tossinvest.com",
+            float(os.environ.get("TOSS_RPS") or "15"), ROOT / ".token.json",
+        )
+        with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
+            return run(client, conn, symbols, capital)
+    except Exception as e:
+        # 예외 문자열에 접속 문자열 등이 섞일 수 있어 종류와 토스 오류 코드만 남긴다
+        log.error("실행 실패: %s %s", type(e).__name__, e.code if isinstance(e, TossError) else "")
+        notify.send_telegram(f"[모의투자] {now.date()} 실행 실패: {type(e).__name__}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
