@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 import engine
+import selection
 import selector
 import store
 from bars import KST, Bar, DailyBar
@@ -174,6 +175,37 @@ def test_lookup_failure_rejects_symbol_and_no_selection_keeps_file(conn, env):
     lines = env["sent"][0].splitlines()
     assert lines[0] == "[종목선정] 2026-09-18 선정 없음, 전날 종목 유지(005930, 000660)"
     assert lines[1] == "후보 3 → 위험 제외 2 (공매도 1, 조회 실패 1) → 백테스트 제외 1 → 통과 0"
+
+
+def test_calculation_error_rejects_only_that_symbol(conn, env, monkeypatch):
+    """기술지표 계산 중 예외가 나면 그 종목만 계산 실패로 제외하고 나머지는 그대로 진행한다."""
+    real_technicals = selection.technicals
+    state = {"raised": False}
+
+    def flaky_technicals(daily):
+        """A(가장 먼저 처리되는 후보)에서 딱 한 번만 예외를 던진다."""
+        if not state["raised"]:
+            state["raised"] = True
+            raise ZeroDivisionError("boom")
+        return real_technicals(daily)
+
+    monkeypatch.setattr(selector.selection, "technicals", flaky_technicals)
+    env["backtests"].update(C=trades_for("0.2", "-0.1"))
+    client = FakeClient(Clock(START), SPECS)
+    assert selector.run(client, conn, env["path"], now=client.clock.now) == 0
+    assert rows(conn) == [("A", "rejected", "계산 실패"), ("C", "rejected", "확인 구간 손실"), ("D", "rejected", "공매도")]
+    assert env["sent"][0].splitlines()[1] == "후보 3 → 위험 제외 2 (계산 실패 1, 공매도 1) → 백테스트 제외 1 → 통과 0"
+
+
+def test_start_after_deadline_skips_toss_calls(conn, env):
+    """이미 마감을 넘겨 실행하면 순위·종목 조회 없이 바로 전날 종목 유지 메일을 보낸다."""
+    client = FakeClient(Clock(datetime(2026, 9, 18, 9, 0, tzinfo=KST)), SPECS)
+    assert selector.run(client, conn, env["path"], now=client.clock.now,
+                        deadline=datetime(2026, 9, 18, 8, 45, tzinfo=KST)) == 0
+    assert client.calls == [("market_hours", None)]
+    assert rows(conn) == []
+    assert env["path"].read_text(encoding="utf-8") == "005930\n000660\n"
+    assert env["sent"][0].splitlines()[0] == "[종목선정] 2026-09-18 시간 초과, 전날 종목 유지(005930, 000660)"
 
 
 def test_deadline_stops_keeps_file_and_mails_timeout(conn, env):

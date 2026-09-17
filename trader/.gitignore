@@ -4,3 +4,5 @@ logs/
 .venv/
 __pycache__/
 .pytest_cache/
+paper_symbols.txt
+paper_symbols.txt.tmp

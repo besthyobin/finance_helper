@@ -66,6 +66,13 @@ def run(client, conn, symbols_path, now=lambda: datetime.now(KST), deadline=None
         """마감을 넘겼으면 True."""
         return deadline is not None and now() >= deadline
 
+    previous = read_symbols(symbols_path) if symbols_path.exists() else []
+    if over():
+        log.info("%s 마감 초과, 토스 조회 없이 종료", today)
+        empty_summary = {"ranked": 0, "dropped": {}, "candidates": 0, "risk": {}, "backtest_rejected": 0, "passed": 0}
+        notify.send_mail(selection.format_mail(today, [], empty_summary, kept=previous, reason="시간 초과"))
+        return 0
+
     rankings = client.rankings()
     stocks = client.stocks([r["symbol"] for r in rankings])
     kept, dropped = selection.candidates(rankings, stocks)
@@ -94,12 +101,20 @@ def run(client, conn, symbols_path, now=lambda: datetime.now(KST), deadline=None
             summary["risk"]["조회 실패"] += 1
             log.error("%s 조회 실패 %s", symbol, e.code)
             continue
-        tech = selection.technicals(daily)
-        row["metrics"].update(tech=tech, investor=selection.investor_sums(investor),
-                              short_avg=selection.short_average(short),
-                              margin=credit[0]["margin_balance_rate"] if credit else None,
-                              warnings=[w["type"] for w in warnings])
-        reason = selection.risk_reason(today, stocks[symbol], warnings, short, credit, tech)
+        try:
+            tech = selection.technicals(daily)
+            row["metrics"].update(tech=tech, investor=selection.investor_sums(investor),
+                                  short_avg=selection.short_average(short),
+                                  margin=credit[0]["margin_balance_rate"] if credit else None,
+                                  warnings=[w["type"] for w in warnings])
+            reason = selection.risk_reason(today, stocks[symbol], warnings, short, credit, tech)
+        except TossAuthError:
+            raise
+        except Exception as e:
+            row["reason"] = "계산 실패"
+            summary["risk"]["계산 실패"] += 1
+            log.error("%s 계산 실패 %s", symbol, type(e).__name__)
+            continue
         if reason:
             row["reason"] = reason
             summary["risk"][reason] += 1
@@ -137,7 +152,6 @@ def run(client, conn, symbols_path, now=lambda: datetime.now(KST), deadline=None
     summary["passed"] = len(passed)
     store.save_candidates(conn, today, list(rows.values()))
 
-    previous = read_symbols(symbols_path) if symbols_path.exists() else []
     if timed_out:
         reason = "시간 초과"
     elif not selected:

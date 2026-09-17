@@ -136,6 +136,7 @@ ORDER BY 1, 2;
 - 기록: `paper_status`(종목별 현재 상태), `paper_trades`(완결 거래). 중간에 꺼졌다 다시 켜면 같은 상태로 복구되고 거래는 중복 저장되지 않는다
 - 차트용으로 장중에 받은 정규장 봉을 `minute_bars.source='toss_live'`로 저장한다. 수집기 확정 봉(`toss`)과 섞이지 않으며 백테스트는 `--source toss`로 확정 봉만 쓴다
 - 로그: `logs/paper-YYYY-MM-DD.log`
+- 종목 파일 `paper_symbols.txt`는 git에서 제외된다. 처음에는 `paper_symbols.example.txt`를 복사해 만들고, 이후에는 종목 선정기가 매일 갱신한다
 - 토스 토큰은 클라이언트당 1개라 두 프로세스가 동시에 재발급하면 서로 무효화한다. 장중(08:55~15:31)에는 `collector.py`를 수동 실행하지 않는다. PC가 20:30에 꺼져 있었다면 수집기 작업(StartWhenAvailable)이 다음 날 장중에 켜질 때 실행될 수 있으니, 그런 날은 모의투자 알림을 확인한다
 - 봉 확정 판단은 PC 시계를 쓴다. Windows 시간 동기화를 켜 둔다
 
@@ -179,6 +180,7 @@ FROM paper_trades ORDER BY exit_ts DESC LIMIT 20;
 - 선정: 확인 구간 평균 수익률 순 최대 5개. 없으면 파일을 바꾸지 않는다(전날 종목 유지)
 - 마감: 08:45를 넘기면 멈추고 전날 종목 유지 메일을 보낸다
 - 기록: `selection_candidates`(날짜·종목별 상태, 제외 사유, 지표·백테스트 수치), 로그 `logs/selector-YYYY-MM-DD.log`
+- 처음 실행 전 위 "운영 DB 스키마 갱신"으로 `schema.sql`을 적용한다(`selection_candidates` 테이블). 없으면 1~2시간 백필 뒤 저장 단계에서 실패한다
 - 첫 실행은 후보 1년치 백필에 1~2시간 걸리므로 작업 스케줄러 등록 전에 `.\.venv\Scripts\python selector.py --no-deadline`으로 수동 실행한다. 장중(08:55~15:31)과 수집기 시각(20:30)을 피한다
 
 작업 스케줄러 등록(`trader` 폴더 기준, 관리자 권한 불필요):
