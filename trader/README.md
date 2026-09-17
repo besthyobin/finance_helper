@@ -1,7 +1,7 @@
-# 토스증권 1분봉 수집기, 백테스터, 모의투자
+# 토스증권 1분봉 수집기, 백테스터, 모의투자, 종목 선정
 
-`symbols.txt` 종목의 1분봉을 토스증권 Open API에서 받아 PostgreSQL에 저장하고, 저장한 봉으로 전략을 백테스트하고, 장중 실시간 봉으로 모의투자한다.
-설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`, `docs/superpowers/specs/2026-09-17-paper-trader-design.md`
+`symbols.txt` 종목의 1분봉을 토스증권 Open API에서 받아 PostgreSQL에 저장하고, 저장한 봉으로 전략을 백테스트하고, 장중 실시간 봉으로 모의투자하고, 매일 아침 모의투자 종목을 고른다.
+설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`, `docs/superpowers/specs/2026-09-17-paper-trader-design.md`, `docs/superpowers/specs/2026-09-17-daily-selector-design.md`
 
 ## 설치
 
@@ -163,6 +163,39 @@ FROM paper_trades ORDER BY exit_ts DESC LIMIT 20;
 ```
 
 `http://127.0.0.1:8765`에서 종목별 현재 상태(보유·평가손익·마지막 봉), 고른 종목의 오늘 1분봉 캔들 차트(매수 ▲·매도 ▼ 표시, 확대 슬라이더), 오늘 체결, 일별 손익과 누적 손익 차트를 5초마다 갱신한다. 캔들은 장중 수신 봉(`toss_live`)을, 없으면 수집기 확정 봉을 쓴다(20:30 전까지 장 마감 후에는 비어 있을 수 있다). 차트는 ECharts(Apache 2.0)를 jsDelivr CDN에서 받으므로 인터넷 연결이 필요하다. 장중에 2분 넘게 상태 갱신이 없으면 "모의투자 프로세스 멈춤"을 띄운다(휴장일에도 뜰 수 있다). `paper.py`와 따로 실행하므로 장 마감 후에도 볼 수 있다.
+
+## 매일 종목 선정
+
+```powershell
+.\.venv\Scripts\python selector.py
+```
+
+평일 07:30에 실행해 모의투자 종목을 최대 5개 고르고 `paper_symbols.txt`를 갱신한 뒤 결과를 메일로 보낸다.
+
+- 후보: 시장 거래대금 1년 상위 100(투자 유의 제외) 중 보통주·상장 중·전일 종가 10만 원 이하
+- 위험 제외: 거래정지, 활성 경고(정리매매·단기과열·투자경고·투자위험), 최근 5일 평균 공매도 거래대금 비중 10% 이상, 신용융자 잔고율 8% 이상, 최근 20일 일간 수익률 표준편차 5% 이상, 최근 20일 일평균 거래대금 100억 원 미만(일봉 부족 포함)
+- 백필: 남은 후보의 최근 365일 1분봉 중 없는 날짜만 받는다(`collect_runs` 재사용)
+- 백테스트: 모의투자와 같은 조건(orb 기본값, 정규장, 수수료·세금·슬리피지). 청산일 기준 91일 전까지는 선정 구간(거래 20건 이상·평균 플러스), 이후는 확인 구간(거래 있음·평균 플러스)
+- 선정: 확인 구간 평균 수익률 순 최대 5개. 없으면 파일을 바꾸지 않는다(전날 종목 유지)
+- 마감: 08:45를 넘기면 멈추고 전날 종목 유지 메일을 보낸다
+- 기록: `selection_candidates`(날짜·종목별 상태, 제외 사유, 지표·백테스트 수치), 로그 `logs/selector-YYYY-MM-DD.log`
+- 첫 실행은 후보 1년치 백필에 1~2시간 걸리므로 작업 스케줄러 등록 전에 `.\.venv\Scripts\python selector.py --no-deadline`으로 수동 실행한다. 장중(08:55~15:31)과 수집기 시각(20:30)을 피한다
+
+작업 스케줄러 등록(`trader` 폴더 기준, 관리자 권한 불필요):
+
+```powershell
+$dir = (Get-Location).Path
+$action = New-ScheduledTaskAction -Execute "$dir\.venv\Scripts\python.exe" -Argument "selector.py" -WorkingDirectory $dir
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 07:30
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+Register-ScheduledTask -TaskName "토스 종목 선정" -Action $action -Trigger $trigger -Settings $settings
+```
+
+결과 확인:
+
+```sql
+SELECT status, reason, count(*) FROM selection_candidates WHERE run_date = CURRENT_DATE GROUP BY 1, 2 ORDER BY 1, 3 DESC;
+```
 
 ## 첫 실행 수동 검증 (1회)
 

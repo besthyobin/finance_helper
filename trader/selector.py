@@ -1,8 +1,14 @@
 """매일 종목 선정 진입점. 작업 스케줄러가 평일 07:30에 실행해 모의투자 종목(paper_symbols.txt)을 고르고 메일로 알린다."""
+import argparse
 import logging
 import os
+import sys
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from pathlib import Path
+
+import psycopg
+from dotenv import load_dotenv
 
 import collector
 import engine
@@ -14,7 +20,11 @@ from bars import KST
 from collector import read_symbols
 from paper import COSTS
 from strategies import Orb
-from toss import TossAuthError, TossError
+from toss import TossAuthError, TossClient, TossError
+
+ROOT = Path(__file__).resolve().parent
+REQUIRED_ENV = ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET", "DATABASE_URL")
+DEADLINE = time(8, 45)
 
 HISTORY_DAYS = 365
 CONFIRM_DAYS = 91
@@ -138,3 +148,46 @@ def run(client, conn, symbols_path, now=lambda: datetime.now(KST), deadline=None
     log.info("%s 선정 %s", today, [s["symbol"] for s in selected] if not reason else reason)
     notify.send_mail(selection.format_mail(today, selected, summary, kept=previous, reason=reason))
     return 0
+
+
+def setup_logging(today):
+    """콘솔과 logs/selector-YYYY-MM-DD.log에 로그를 남기도록 설정한다."""
+    (ROOT / "logs").mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler(),
+                  logging.FileHandler(ROOT / "logs" / f"selector-{today}.log", encoding="utf-8")],
+    )
+
+
+def main(argv=None, now=None):
+    """종목 선정 1회 실행. 정상·휴장·시간 초과면 0, 설정·DB·인증 등 실행 전체 실패면 1을 반환한다."""
+    parser = argparse.ArgumentParser(description="매일 모의투자 종목 선정")
+    parser.add_argument("--no-deadline", action="store_true", help="08:45 마감 없이 실행 (첫 백필용)")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    now = now or datetime.now(KST)
+    load_dotenv(ROOT / ".env")
+    setup_logging(now.date())
+    try:
+        missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+        if missing:
+            log.error(".env 누락: %s", ", ".join(missing))
+            raise RuntimeError("missing env")
+        client = TossClient(
+            os.environ["TOSS_CLIENT_ID"], os.environ["TOSS_CLIENT_SECRET"],
+            os.environ.get("TOSS_BASE_URL") or "https://openapi.tossinvest.com",
+            float(os.environ.get("TOSS_RPS") or "15"), ROOT / ".token.json",
+        )
+        deadline = None if args.no_deadline else datetime.combine(now.date(), DEADLINE, KST)
+        with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
+            return run(client, conn, ROOT / "paper_symbols.txt", deadline=deadline)
+    except Exception as e:
+        # 예외 문자열에 접속 문자열 등이 섞일 수 있어 종류와 토스 오류 코드만 남긴다
+        log.error("실행 실패: %s %s", type(e).__name__, e.code if isinstance(e, TossError) else "")
+        notify.send_mail(f"[종목선정] {now.date()} 실행 실패: {type(e).__name__}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

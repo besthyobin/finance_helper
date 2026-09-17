@@ -1,3 +1,5 @@
+import logging
+import os
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -258,3 +260,54 @@ def test_backfill_days_and_write_symbols(tmp_path):
     assert path.read_text(encoding="utf-8") == "# 2026-09-18 종목 선정기 자동 생성\nA  # 에이\nB  # 비\n"
     assert selector.read_symbols(path) == ["A", "B"]
     assert not (tmp_path / "paper_symbols.txt.tmp").exists()
+
+
+@pytest.fixture
+def main_env(monkeypatch):
+    """main이 실제 .env·메일을 쓰지 않도록 막고 보낸 메일 목록을 돌려준다."""
+    monkeypatch.setattr(selector, "load_dotenv", lambda *args, **kwargs: None)
+    for key in selector.REQUIRED_ENV + ("TOSS_BASE_URL", "TOSS_RPS"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("TOSS_CLIENT_ID", "CID-X")
+    monkeypatch.setenv("TOSS_CLIENT_SECRET", "SECRET-X")
+    sent = []
+    monkeypatch.setattr(selector.notify, "send_mail", sent.append)
+    return sent
+
+
+def test_main_missing_env_fails_without_secrets(main_env, monkeypatch, caplog):
+    """설정이 빠지면 1을 반환하고 로그·메일에는 변수 이름과 예외 종류만 남긴다."""
+    monkeypatch.setenv("DATABASE_URL", "SECRETPW")
+    monkeypatch.delenv("TOSS_CLIENT_ID")
+    with caplog.at_level(logging.INFO):
+        assert selector.main([], now=START) == 1
+    assert ".env 누락: TOSS_CLIENT_ID" in caplog.text
+    assert "SECRET-X" not in caplog.text and "SECRETPW" not in caplog.text
+    assert main_env == ["[종목선정] 2026-09-18 실행 실패: RuntimeError"]
+
+
+@pytest.mark.parametrize("argv, deadline", [
+    ([], datetime(2026, 9, 18, 8, 45, tzinfo=KST)),
+    (["--no-deadline"], None),
+])
+def test_main_passes_deadline_and_default_client(conn, main_env, monkeypatch, argv, deadline):
+    """토스 기본 설정으로 클라이언트를 만들고, 기본은 08:45 마감, --no-deadline이면 마감 없이 run을 부른다."""
+    monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    created, calls = [], []
+    monkeypatch.setattr(selector, "TossClient", lambda *args: created.append(args[:4]) or "CLIENT")
+    monkeypatch.setattr(selector, "run", lambda client, conn, path, deadline=None: calls.append((client, path, deadline)) or 0)
+    assert selector.main(argv, now=START) == 0
+    assert created == [("CID-X", "SECRET-X", "https://openapi.tossinvest.com", 15.0)]
+    assert calls == [("CLIENT", selector.ROOT / "paper_symbols.txt", deadline)]
+
+
+def test_main_auth_error_returns_1_and_mails(conn, main_env, monkeypatch):
+    """인증 오류면 실행 실패 메일을 보내고 1을 반환한다."""
+    monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    monkeypatch.setattr(selector, "TossClient", lambda *args: "CLIENT")
+    def auth_fail(*args, **kwargs):
+        """인증 실패를 흉내 낸다."""
+        raise TossAuthError("access_denied")
+    monkeypatch.setattr(selector, "run", auth_fail)
+    assert selector.main([], now=START) == 1
+    assert main_env == ["[종목선정] 2026-09-18 실행 실패: TossAuthError"]
