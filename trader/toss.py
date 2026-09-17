@@ -1,4 +1,4 @@
-"""토스증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도, 1분봉·장 운영 시간 조회."""
+"""토스증권 Open API 클라이언트: 토큰 캐시, 호출 간격 제한, 재시도, 봉·장 운영 시간·순위·종목·위험 지표 조회."""
 import json
 import time as _time
 from datetime import date, datetime, timedelta
@@ -7,13 +7,15 @@ from pathlib import Path
 
 import requests
 
-from bars import KST, Bar
+from bars import KST, Bar, DailyBar
 
 NETWORK_DELAYS = (1, 2, 4)
 RATE_LIMIT_RETRIES = 3
 REISSUE_CODES = {"expired-token", "token-revoked", "invalid-token"}
 CANDLES_PATH = "/api/v1/candles"
 MARKET_CALENDAR_PATH = "/api/v1/market-calendar/KR"
+RANKINGS_PATH = "/api/v1/rankings"
+STOCKS_PATH = "/api/v1/stocks"
 PAGE_SIZE = 200
 MAX_PAGES = 10
 
@@ -53,6 +55,29 @@ def _to_bar(candle):
     end = datetime.fromisoformat(candle["timestamp"]).astimezone(KST)
     return Bar(end - timedelta(minutes=1), Decimal(candle["openPrice"]), Decimal(candle["highPrice"]),
                Decimal(candle["lowPrice"]), Decimal(candle["closePrice"]), int(Decimal(candle["volume"])))
+
+
+def _parsed(convert, body):
+    """convert(body)로 응답을 바꾸고, 형식 오류는 BAD_RESPONSE 예외로 바꾼다."""
+    try:
+        return convert(body)
+    except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError):
+        raise TossError("BAD_RESPONSE") from None
+
+
+def _date(text):
+    """YYYY-MM-DD 문자열을 date로 바꾼다. None이면 None."""
+    return date.fromisoformat(text) if text is not None else None
+
+
+def _decimal(text):
+    """숫자 문자열을 Decimal로 바꾼다. None이면 None."""
+    return Decimal(text) if text is not None else None
+
+
+def _int(text):
+    """정수 문자열을 int로 바꾼다. None이면 None."""
+    return int(Decimal(text)) if text is not None else None
 
 
 class TossClient:
@@ -221,3 +246,56 @@ class TossClient:
                     datetime.fromisoformat(regular["endTime"]).astimezone(KST))
         except (KeyError, TypeError, AttributeError, ValueError):
             raise TossError("BAD_RESPONSE") from None
+
+    def rankings(self):
+        """시장 거래대금 1년 상위 100(투자 유의 제외)을 순위순 [{rank, symbol, last_price}]로 반환한다."""
+        body = self._get(RANKINGS_PATH, {"type": "MARKET_TRADING_AMOUNT", "marketCountry": "KR", "duration": "1y",
+                                         "excludeInvestmentCaution": "true", "count": 100})
+        return _parsed(lambda b: [{"rank": int(r["rank"]), "symbol": r["symbol"],
+                                   "last_price": Decimal(r["price"]["lastPrice"])}
+                                  for r in b["result"]["rankings"]], body)
+
+    def stocks(self, symbols):
+        """종목 기본 정보(100개 이하)를 {symbol: {name, security_type, common, active, suspended}}로 반환한다."""
+        body = self._get(STOCKS_PATH, {"symbols": ",".join(symbols)})
+        return _parsed(lambda b: {s["symbol"]: {
+            "name": s["name"], "security_type": s["securityType"], "common": bool(s["isCommonShare"]),
+            "active": s["status"] == "ACTIVE",
+            "suspended": bool((s.get("koreanMarketDetail") or {}).get("krxTradingSuspended")),
+        } for s in b["result"]}, body)
+
+    def warnings(self, symbol):
+        """종목의 활성 매수 유의사항을 [{type, start, end}]로 반환한다."""
+        body = self._get(f"{STOCKS_PATH}/{symbol}/warnings", {})
+        return _parsed(lambda b: [{"type": w["warningType"], "start": _date(w.get("startDate")),
+                                   "end": _date(w.get("endDate"))} for w in b["result"]], body)
+
+    def short_selling(self, symbol, count):
+        """최근 count일 공매도 거래대금 비중을 최신순 [{date, amount_rate}]로 반환한다."""
+        body = self._get(f"{STOCKS_PATH}/{symbol}/short-selling", {"count": count})
+        return _parsed(lambda b: [{"date": date.fromisoformat(r["date"]),
+                                   "amount_rate": _decimal(r.get("shortSellingAmountRate"))}
+                                  for r in b["result"]["records"]], body)
+
+    def credit_trades(self, symbol, count):
+        """최근 count일 신용융자 잔고율을 최신순 [{date, margin_balance_rate}]로 반환한다."""
+        body = self._get(f"{STOCKS_PATH}/{symbol}/credit-trades", {"count": count})
+        return _parsed(lambda b: [{"date": date.fromisoformat(r["date"]),
+                                   "margin_balance_rate": _decimal((r.get("marginLoan") or {}).get("balanceRate"))}
+                                  for r in b["result"]["records"]], body)
+
+    def investor_trading(self, symbol, count):
+        """최근 count일 외국인·기관 순매수 주 수를 최신순 [{date, foreigner, institution}]로 반환한다."""
+        body = self._get(f"{STOCKS_PATH}/{symbol}/investor-trading", {"count": count})
+        return _parsed(lambda b: [{"date": date.fromisoformat(r["date"]),
+                                   "foreigner": _int((r.get("foreigner") or {}).get("netBuyVolume")),
+                                   "institution": _int((r.get("institution") or {}).get("netBuyVolume"))}
+                                  for r in b["result"]["records"]], body)
+
+    def fetch_daily(self, symbol, count):
+        """수정주가 일봉 count개를 날짜 오름차순 DailyBar로 반환한다. 장중이면 오늘 진행 중인 일봉이 섞일 수 있다."""
+        body = self._get(CANDLES_PATH, {"symbol": symbol, "interval": "1d", "count": count, "adjusted": "true"})
+        return _parsed(lambda b: sorted((DailyBar(
+            datetime.fromisoformat(c["timestamp"]).astimezone(KST).date(), Decimal(c["openPrice"]),
+            Decimal(c["highPrice"]), Decimal(c["lowPrice"]), Decimal(c["closePrice"]), int(Decimal(c["volume"])),
+        ) for c in b["result"]["candles"]), key=lambda d: d.date), body)

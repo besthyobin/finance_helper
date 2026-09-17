@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from bars import KST, Bar
+from bars import KST, Bar, DailyBar
 from toss import TossAuthError, TossClient, TossError
 
 NOW = datetime(2026, 9, 15, 20, 30, tzinfo=KST)
@@ -393,4 +393,143 @@ def test_market_hours_rejects_bad_body(tmp_path):
     client = make_client(tmp_path, FakeToss(on_get=lambda params: FakeResponse({"result": {}})))
     with pytest.raises(TossError) as e:
         client.market_hours(CAL_DAY)
+    assert e.value.code == "BAD_RESPONSE"
+
+
+def serve(body):
+    """모든 GET에 같은 본문을 주는 FakeToss를 만든다."""
+    return FakeToss(on_get=lambda params: FakeResponse(body))
+
+
+def test_rankings_requests_trading_amount_1y_top_100(tmp_path):
+    """시장 거래대금 1년 상위 100(투자 유의 제외)을 요청해 순위·종목·전일 종가로 바꾼다."""
+    fake = serve({"result": {"rankedAt": "2026-09-17T17:30:48+09:00", "rankings": [
+        {"rank": 1, "symbol": "000660", "currency": "KRW",
+         "price": {"lastPrice": "1756000", "basePrice": "1759000", "changeRate": "-0.0017"},
+         "tradingVolume": "1", "tradingAmount": "2"},
+        {"rank": 2, "symbol": "005930", "currency": "KRW",
+         "price": {"lastPrice": "254000", "basePrice": "253500", "changeRate": "0.002"},
+         "tradingVolume": "1", "tradingAmount": "2"},
+    ]}})
+    assert make_client(tmp_path, fake).rankings() == [
+        {"rank": 1, "symbol": "000660", "last_price": Decimal("1756000")},
+        {"rank": 2, "symbol": "005930", "last_price": Decimal("254000")},
+    ]
+    _, url, kwargs = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/rankings"
+    assert kwargs["params"] == {"type": "MARKET_TRADING_AMOUNT", "marketCountry": "KR", "duration": "1y",
+                                "excludeInvestmentCaution": "true", "count": 100}
+
+
+def test_stocks_maps_type_common_active_suspended(tmp_path):
+    """종목 정보를 이름·유형·보통주·활성·거래정지로 바꾸고, 거래정지 정보가 없으면 False로 본다."""
+    fake = serve({"result": [
+        {"symbol": "005930", "name": "삼성전자", "securityType": "STOCK", "isCommonShare": True, "status": "ACTIVE",
+         "koreanMarketDetail": {"liquidationTrading": False, "krxTradingSuspended": False}},
+        {"symbol": "122630", "name": "KODEX 레버리지", "securityType": "ETF", "isCommonShare": True,
+         "status": "ACTIVE", "koreanMarketDetail": {"krxTradingSuspended": True}},
+        {"symbol": "005935", "name": "삼성전자우", "securityType": "STOCK", "isCommonShare": False,
+         "status": "DELISTED", "koreanMarketDetail": None},
+    ]})
+    assert make_client(tmp_path, fake).stocks(["005930", "122630", "005935"]) == {
+        "005930": {"name": "삼성전자", "security_type": "STOCK", "common": True, "active": True, "suspended": False},
+        "122630": {"name": "KODEX 레버리지", "security_type": "ETF", "common": True, "active": True, "suspended": True},
+        "005935": {"name": "삼성전자우", "security_type": "STOCK", "common": False, "active": False, "suspended": False},
+    }
+    _, url, kwargs = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/stocks"
+    assert kwargs["params"] == {"symbols": "005930,122630,005935"}
+
+
+def test_warnings_parses_type_and_dates(tmp_path):
+    """경고 유형과 시작·종료일을 date로 바꾸고, 없는 날짜는 None으로 둔다."""
+    fake = serve({"result": [
+        {"warningType": "OVERHEATED", "exchange": "KRX", "startDate": "2026-09-17", "endDate": "2026-09-19"},
+        {"warningType": "VI_STATIC", "exchange": None, "startDate": None, "endDate": None},
+    ]})
+    assert make_client(tmp_path, fake).warnings("005930") == [
+        {"type": "OVERHEATED", "start": date(2026, 9, 17), "end": date(2026, 9, 19)},
+        {"type": "VI_STATIC", "start": None, "end": None},
+    ]
+    _, url, _ = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/stocks/005930/warnings"
+
+
+def test_short_selling_parses_amount_rate(tmp_path):
+    """공매도 기록의 날짜와 거래대금 비중을 바꾸고, 비중이 null이면 None으로 둔다."""
+    fake = serve({"result": {"nextUntil": None, "records": [
+        {"date": "2026-09-17", "shortSellingVolume": "1", "shortSellingAmount": "2",
+         "shortSellingVolumeRate": "0.05121", "shortSellingAmountRate": "0.0512"},
+        {"date": "2026-09-16", "shortSellingAmountRate": None},
+    ]}})
+    assert make_client(tmp_path, fake).short_selling("005930", 5) == [
+        {"date": date(2026, 9, 17), "amount_rate": Decimal("0.0512")},
+        {"date": date(2026, 9, 16), "amount_rate": None},
+    ]
+    _, url, kwargs = fake.gets()[0]
+    assert (url, kwargs["params"]) == ("https://toss.test/api/v1/stocks/005930/short-selling", {"count": 5})
+
+
+def test_credit_trades_parses_margin_balance_rate(tmp_path):
+    """신용 기록의 융자 잔고율을 바꾸고, 융자 객체가 null이면 None으로 둔다."""
+    fake = serve({"result": {"nextUntil": None, "records": [
+        {"date": "2026-09-16", "marginLoan": {"balanceQuantity": "1", "balanceRate": "0.0038", "tradingRate": "0.08"},
+         "stockLoan": None},
+        {"date": "2026-09-15", "marginLoan": None, "stockLoan": {"balanceRate": "0"}},
+    ]}})
+    assert make_client(tmp_path, fake).credit_trades("005930", 1) == [
+        {"date": date(2026, 9, 16), "margin_balance_rate": Decimal("0.0038")},
+        {"date": date(2026, 9, 15), "margin_balance_rate": None},
+    ]
+    _, url, kwargs = fake.gets()[0]
+    assert (url, kwargs["params"]) == ("https://toss.test/api/v1/stocks/005930/credit-trades", {"count": 1})
+
+
+def test_investor_trading_parses_net_buy_volume(tmp_path):
+    """외국인·기관 순매수 주 수를 int로 바꾸고, 분류가 null이면 None으로 둔다."""
+    fake = serve({"result": {"nextUntil": None, "records": [
+        {"date": "2026-09-17", "individual": {"netBuyVolume": "119683"},
+         "foreigner": {"buyVolume": "1", "sellVolume": "2", "netBuyVolume": "-2217618"},
+         "institution": {"netBuyVolume": "83183"}},
+        {"date": "2026-09-16", "foreigner": None, "institution": None},
+    ]}})
+    assert make_client(tmp_path, fake).investor_trading("005930", 5) == [
+        {"date": date(2026, 9, 17), "foreigner": -2217618, "institution": 83183},
+        {"date": date(2026, 9, 16), "foreigner": None, "institution": None},
+    ]
+    _, url, kwargs = fake.gets()[0]
+    assert (url, kwargs["params"]) == ("https://toss.test/api/v1/stocks/005930/investor-trading", {"count": 5})
+
+
+def test_fetch_daily_returns_daily_bars_ascending(tmp_path):
+    """수정주가 일봉을 요청해 KST 날짜 오름차순 DailyBar로 바꾼다."""
+    fake = serve({"result": {"candles": [
+        {"timestamp": "2026-09-17T00:00:00.000+09:00", "openPrice": "251500", "highPrice": "259000",
+         "lowPrice": "251000", "closePrice": "254000", "volume": "15484762", "currency": "KRW"},
+        {"timestamp": "2026-09-16T00:00:00.000+09:00", "openPrice": "250000", "highPrice": "254000",
+         "lowPrice": "247500", "closePrice": "253500", "volume": "16705728", "currency": "KRW"},
+    ], "nextBefore": None}})
+    assert make_client(tmp_path, fake).fetch_daily("005930", 2) == [
+        DailyBar(date(2026, 9, 16), Decimal("250000"), Decimal("254000"), Decimal("247500"), Decimal("253500"), 16705728),
+        DailyBar(date(2026, 9, 17), Decimal("251500"), Decimal("259000"), Decimal("251000"), Decimal("254000"), 15484762),
+    ]
+    _, url, kwargs = fake.gets()[0]
+    assert url == "https://toss.test/api/v1/candles"
+    assert kwargs["params"] == {"symbol": "005930", "interval": "1d", "count": 2, "adjusted": "true"}
+
+
+@pytest.mark.parametrize("call", [
+    lambda c: c.rankings(),
+    lambda c: c.stocks(["005930"]),
+    lambda c: c.warnings("005930"),
+    lambda c: c.short_selling("005930", 5),
+    lambda c: c.credit_trades("005930", 1),
+    lambda c: c.investor_trading("005930", 5),
+    lambda c: c.fetch_daily("005930", 80),
+])
+def test_market_data_rejects_bad_body(tmp_path, call):
+    """result가 없거나 형식이 다르면 BAD_RESPONSE 예외를 낸다."""
+    client = make_client(tmp_path, serve({"result": {"records": [{"date": "not-a-date"}], "rankings": [{}]}}))
+    with pytest.raises(TossError) as e:
+        call(client)
     assert e.value.code == "BAD_RESPONSE"
