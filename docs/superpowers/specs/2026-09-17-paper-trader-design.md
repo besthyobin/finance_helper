@@ -19,7 +19,7 @@
 - 모의투자·샌드박스 환경 없음. 주문 API는 실계좌 전용
 - 국내 주식 주문은 정수 수량만 가능(소수점은 미국 주식 시장가 매도만)
 - `GET /api/v1/rankings`: 거래대금·거래량·등락률 순위만, 최대 100위. 시가총액 순위 없음
-- `GET /api/v1/market-calendar/KR`: 전일·당일·익일 영업일의 `integrated.regularMarket.startTime/endTime` (KST). 당일이 휴장이면 `today.date`가 오늘이 아니다
+- `GET /api/v1/market-calendar/KR`: 전일·당일·익일 영업일의 `integrated.regularMarket.startTime/endTime` (KST). 당일이 휴장이면 `today.integrated`(또는 `regularMarket`)가 null이다
 - 웹소켓 실시간 시세 없음
 
 ### 확정된 결정
@@ -102,15 +102,15 @@ class DayRunner:
 
 ### 3.2 `toss.py` 추가
 
-**`fetch_recent(symbol, count, now)`**
+**`fetch_recent(symbol, count)`**
 1. `_get(CANDLES_PATH, {"symbol", "interval": "1m", "count", "adjusted": "false"})`
-2. 각 캔들의 끝나는 시각이 `now`보다 늦으면 버린다(진행 중인 봉)
+2. 각 캔들의 끝나는 시각이 클라이언트 시계(`self._now()`)보다 늦으면 버린다(진행 중인 봉)
 3. `fetch_day`와 같은 변환(시각 −1분, `Decimal`, `int`)으로 `Bar` 목록을 시각 오름차순 반환
 4. 변환 코드는 `fetch_day`와 공용 함수 `_to_bar(candle)`로 뽑는다
 
 **`market_hours(day)`**
 - `GET /api/v1/market-calendar/KR?date=YYYY-MM-DD`
-- `result.today.date != day`이면 `None`(휴장)
+- `result.today.date != day`이거나 `integrated` 또는 `integrated.regularMarket`이 null이면 `None`(휴장)
 - 아니면 `(regularMarket.startTime, regularMarket.endTime)`을 KST `datetime` 튜플로 반환
 - 형식이 다르면 `TossError("BAD_RESPONSE")`
 
@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 ### 3.4 `store.py` 추가
 
 - `save_paper_status(conn, row)`: `symbol` 기준 upsert
-- `save_paper_trade(conn, symbol, strategy, qty, trade, pnl_krw)`: `(symbol, entry_ts)` 기준 upsert
+- `save_paper_trade(conn, strategy, qty, trade, pnl_krw)` (종목은 `trade.symbol`): `(symbol, entry_ts)` 기준 upsert
 - `load_paper_status(conn)`: 전체 행
 - `load_paper_trades(conn, day)`: `exit_ts`의 KST 날짜가 `day`인 거래, `exit_ts` 오름차순
 - `load_paper_daily(conn)`: KST 날짜별 거래 수·승 수·`pnl_krw` 합계, 최신순
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 1. **시작 검사:** `market_hours(오늘)`이 `None`이면 "휴장" 로그 후 종료 코드 0. 정규장이 09:00~15:30이 아니면 텔레그램 "정규장 시간 변경일, 모의투자 안 함" 후 종료 코드 0
 2. **준비:** 종목마다 `DayRunner(symbol, Orb({}), costs)`를 만든다
 3. **따라잡기:** 종목마다 `fetch_day(오늘)` 중 `now` 이전에 끝난 정규장 봉을 `process(symbol, bars)`에 넣는다
-4. **매분 루프:** 매분 :15초까지 대기 → 종목마다 `fetch_recent(symbol, 5, now)` → 정규장 봉 중 `last_bar_ts` 이후만 `process`. 새 봉 중 첫 봉이 `last_bar_ts + 1분`이 아니면(처리한 봉이 없으면 09:00이 아니면) 빈 분이 있는 것이므로 그 종목은 `fetch_day`로 따라잡는다. 봉 시각은 연속이라고 가정한다(토스는 거래 없는 분도 채움 봉을 준다). 모든 종목의 `runner.done`이 참이 되거나 15:31이 지나면 루프를 끝낸다
+4. **매분 루프:** 매분 :15초까지 대기 → 종목마다 `fetch_recent(symbol, 5)` → 정규장 봉 중 `last_bar_ts` 이후만 `process`. 새 봉 중 첫 봉이 `last_bar_ts + 1분`이 아니면(처리한 봉이 없으면 09:00이 아니면) 빈 분이 있는 것이므로 그 종목은 `fetch_day`로 따라잡는다. 봉 시각은 연속이라고 가정한다(토스는 거래 없는 분도 채움 봉을 준다). 다음 조회 시각이 15:31 이후면 루프를 끝내고 15:31까지 기다린다(마감 비교용 봉이 확정되도록). `done`인 종목은 봉을 받아도 체결 없이 상태만 갱신한다
 5. **마감 비교:** 종목마다 `fetch_day(오늘)` 정규장 봉을 `engine.run_day(symbol, Orb({}), bars, costs)`로 돌려 실시간 `Trade` 목록과 `(entry_ts, entry_price, exit_ts, exit_price, exit_reason)`을 비교한다. 루프가 끝났는데 보유 중인 종목은 `runner.finish()`로 청산한다
 6. **일일 요약:** 텔레그램으로 종목별·전체 거래 수, 승/패, `pnl_krw` 합계, 비교 결과("일치" 또는 종목별 차이)를 보낸다. 종료 코드 0
 
