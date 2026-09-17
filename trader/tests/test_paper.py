@@ -240,3 +240,16 @@ def test_auth_error_propagates(conn, sent):
     """인증 오류는 run 밖으로 올린다."""
     with pytest.raises(TossAuthError):
         run_from(conn, at("08:55"), {"A": day_bars(breakout)}, hours=TossAuthError("access_denied"))
+
+
+def test_db_failure_while_processing_alerts_immediately(conn, sent, monkeypatch):
+    """DB 저장처럼 토스 오류가 아닌 예외는 연속 실패를 세지 않고 그 자리에서 바로 알린다."""
+    def fail_save(conn, strategy, qty, trade, pnl_krw):
+        """paper_trades 저장을 항상 실패시킨다."""
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(paper.store, "save_paper_trade", fail_save)
+    code, _, _ = run_from(conn, at("08:55"), {"A": day_bars(breakout)}, capital="500000")
+    assert code == 0
+    assert sent.count("[모의투자] A 처리 실패: RuntimeError, DB·코드 확인 후 재시작 필요") == 1
+    assert not any("연속 5분 실패" in m for m in sent)

@@ -60,22 +60,26 @@ class Paper:
 
     def poll(self, client, symbol, now, catch_up=False):
         """끝난 봉을 받아 처리한다. 따라잡기거나 빈 분이 있으면 하루치를 받는다.
-        인증 오류는 올리고, 그 밖의 오류는 로그만 남기며 연속 5회째에 한 번 알린다."""
+        인증 오류는 올리고, 토스 오류는 로그만 남기며 연속 5회째에 한 번 알린다.
+        그 밖의 오류(예: DB 저장 실패)는 재시작 따라잡기로 복구되지만, 그때까지 거래가 비므로 즉시 알린다."""
         try:
             bars = [] if catch_up else regular(client.fetch_recent(symbol, RECENT_COUNT), now)
             if catch_up or self._has_gap(symbol, bars):
                 bars = regular(client.fetch_day(symbol, self.today), now)
-            # ponytail: 처리 중 DB 저장이 실패하면 runner는 앞서 나가고 그 거래는 저장되지 않는다. 재시작 따라잡기로 복구
             self.process(symbol, bars, alert=not catch_up)
             self.fails[symbol] = 0
         except TossAuthError:
             raise
-        except Exception as e:
+        except TossError as e:
             self.fails[symbol] += 1
-            log.error("%s 조회·처리 실패 %d회: %s %s", symbol, self.fails[symbol], type(e).__name__,
-                      e.code if isinstance(e, TossError) else "")
+            log.error("%s 조회·처리 실패 %d회: %s %s", symbol, self.fails[symbol], type(e).__name__, e.code)
             if self.fails[symbol] == ALERT_AFTER_FAILS:
                 notify.send_telegram(f"[모의투자] {symbol} 연속 {ALERT_AFTER_FAILS}분 실패: {type(e).__name__}")
+        except Exception as e:
+            # ponytail: 처리 중 DB 저장 등이 실패하면 runner는 앞서 나가고 그 거래는 저장되지 않는다.
+            # 재시작 따라잡기로 복구되니, 알림을 보고 재시작할 것
+            log.exception("%s 처리 실패: %s", symbol, type(e).__name__)
+            notify.send_telegram(f"[모의투자] {symbol} 처리 실패: {type(e).__name__}, DB·코드 확인 후 재시작 필요")
 
     def _new(self, symbol, bars):
         """마지막으로 받은 봉 이후의 봉만 반환한다."""
@@ -201,12 +205,12 @@ def run(client, conn, symbols, capital, now=lambda: datetime.now(KST), sleep=_ti
         at = next_fetch_at(now())
         if at.time() >= LOOP_END:
             break
-        sleep((at - now()).total_seconds())
+        sleep(max(0, (at - now()).total_seconds()))
         for symbol in symbols:
             paper.poll(client, symbol, now())
 
     loop_end = datetime.combine(today, LOOP_END, KST)
     if now() < loop_end:
-        sleep((loop_end - now()).total_seconds())
+        sleep(max(0, (loop_end - now()).total_seconds()))
     notify.send_telegram(paper.close(client, now()))
     return 0
