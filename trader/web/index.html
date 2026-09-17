@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>모의투자</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>모의투자</h1>
+    <span class="muted">갱신 <span id="updated">-</span></span>
+  </header>
+  <p id="banner" hidden></p>
+
+  <section>
+    <h2>현재 상태</h2>
+    <table>
+      <thead><tr><th>종목</th><th>보유</th><th>매수가</th><th>현재가</th><th>평가손익</th><th>마지막 봉</th></tr></thead>
+      <tbody id="status"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>오늘 체결</h2>
+    <table>
+      <thead><tr><th>종목</th><th>수량</th><th>진입</th><th>매수가</th><th>청산</th><th>매도가</th><th>손익</th><th>수익률</th><th>사유</th></tr></thead>
+      <tbody id="trades"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>일별 손익</h2>
+    <table>
+      <thead><tr><th>날짜</th><th>거래</th><th>수익 거래</th><th>손익</th></tr></thead>
+      <tbody id="daily"></tbody>
+    </table>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -153,6 +153,14 @@ SELECT (exit_ts AT TIME ZONE 'Asia/Seoul')::date AS day, symbol, qty, entry_pric
 FROM paper_trades ORDER BY exit_ts DESC LIMIT 20;
 ```
 
+화면(이 PC 브라우저 전용, 읽기 전용):
+
+```powershell
+.\.venv\Scripts\python web.py
+```
+
+`http://127.0.0.1:8765`에서 종목별 현재 상태(보유·평가손익·마지막 봉), 오늘 체결, 일별 손익을 5초마다 갱신한다. 장중에 2분 넘게 상태 갱신이 없으면 "모의투자 프로세스 멈춤"을 띄운다(휴장일에도 뜰 수 있다). `paper.py`와 따로 실행하므로 장 마감 후에도 볼 수 있다.
+
 ## 첫 실행 수동 검증 (1회)
 
 1. 위 "운영 DB 스키마 갱신" 적용
