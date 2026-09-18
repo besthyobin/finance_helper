@@ -1,7 +1,7 @@
-# 토스증권 1분봉 수집기, 백테스터, 모의투자, 종목 선정
+# 토스증권 1분봉 수집기, 백테스터, 모의투자, 종목 선정, 스윙 백테스트
 
 `symbols.txt` 종목의 1분봉을 토스증권 Open API에서 받아 PostgreSQL에 저장하고, 저장한 봉으로 전략을 백테스트하고, 장중 실시간 봉으로 모의투자하고, 매일 아침 모의투자 종목을 고른다.
-설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`, `docs/superpowers/specs/2026-09-17-paper-trader-design.md`, `docs/superpowers/specs/2026-09-17-daily-selector-design.md`
+설계: `docs/superpowers/specs/2026-09-15-toss-collector-design.md`, `docs/superpowers/specs/2026-09-15-backtester-design.md`, `docs/superpowers/specs/2026-09-17-paper-trader-design.md`, `docs/superpowers/specs/2026-09-17-daily-selector-design.md`, `docs/superpowers/specs/2026-09-18-swing-backtest-design.md`
 
 ## 설치
 
@@ -198,6 +198,23 @@ Register-ScheduledTask -TaskName "토스 종목 선정" -Action $action -Trigger
 ```sql
 SELECT status, reason, count(*) FROM selection_candidates WHERE run_date = CURRENT_DATE GROUP BY 1, 2 ORDER BY 1, 3 DESC;
 ```
+
+## 일봉 스윙 백테스트
+
+당일 청산 orb는 거래 1건 비용(약 0.33%)을 넘지 못해, 며칠~몇 주 보유하는 일봉 전략을 따로 검증한다.
+
+- 전략 `breakout_trend`: 종가가 직전 entry일 최고 종가를 넘고 trend일 평균 위면 매수, 직전 exit일 최저 종가 아래면 매도. 신호는 그날 종가로 내고 다음 날 시가에 체결(수정주가 일봉)
+- 비용: 모의투자와 같음(수수료 0.015% 양쪽, 매도세 0.20%, 슬리피지 0.05% 양쪽)
+- 대상: 오늘 기준 거래대금 1년 상위 100 중 상장 중인 보통주. 현재 종목으로 과거를 보는 생존 편향이 있다
+- 기간: 최근 10년, 분할일(기본 3년 전) 전은 개발 구간, 이후는 검증 구간. 검증 구간은 조합을 고른 뒤 한 번만 본다
+
+```powershell
+.\.venv\Scripts\python swing_backtest.py --collect             # 대상 종목 10년치 일봉 수집(daily_bars 덮어쓰기), 1~2분
+.\.venv\Scripts\python swing_backtest.py                       # 개발 구간 조합표(entry 20/55 × trend 50/100 × exit 10/20)
+.\.venv\Scripts\python swing_backtest.py --validate 20:50:10   # 고른 조합 하나를 검증 구간에서
+```
+
+표 항목: 거래 수, 승률, 거래당 평균 수익률, 평균 보유일, 종목당 누적 수익(종목별 거래 수익률 합의 평균), 종목당 단순 보유 수익(구간 첫 시가 대비 마지막 종가). 처음 실행 전 `schema.sql`을 적용한다(`daily_bars` 테이블). 수집은 20:30 수집기 시각을 피한다.
 
 ## 첫 실행 수동 검증 (1회)
 
