@@ -175,12 +175,15 @@ def test_full_day_saves_trade_status_and_matches_backtest(conn, sent):
     assert code == 0 and end == at("15:31")
     assert saved_trades(conn) == [("A", 4948, at("09:41"), Decimal("101.0505"), at("10:01"),
                                    Decimal("103.9480"), Decimal("13156.010705300"), "signal")]
-    assert sent == [
-        "[모의투자] 2026-09-17 시작(따라잡기 완료): 2종목, 보유 0종목, 거래 0건",
-        "[모의투자] 매수 A 4948주 @ 101원 (09:41)",
-        "[모의투자] 매도 A 4948주 @ 104원 (10:01) 손익 +13,156원 (+2.63%)",
-        SUMMARY_MATCH,
-    ]
+    assert sent[0].splitlines()[0] == "[모의투자] 2026-09-17 시작(따라잡기 완료): 2종목, 보유 0종목, 거래 0건"
+    assert "■ 자본금: 1,000,000원 (종목당 500,000원)" in sent[0]
+    assert "- A: 미보유 (대기 중)" in sent[0]
+    assert sent[1].startswith("[모의투자] 매수 체결: A 4,948주 @ 101원 (09:41)")
+    assert "■ 매수 총액: 499,998원" in sent[1]
+    assert sent[2].startswith("[모의투자] 매도 체결: A 4,948주 @ 104원 (10:01) 손익 +13,156원 (+2.63%)")
+    assert "실현 손익: +13,156원" in sent[2]
+    assert sent[3].startswith("[모의투자] 2026-09-17 마감 요약: 거래 1건, 실현손익 +13,156원 (+1.32%)")
+    assert "■ 시스템 검증: 실시간 체결과 백테스트 완전 일치" in sent[3]
     status = conn.execute("SELECT symbol, last_bar_ts, last_close, qty, entry_ts FROM paper_status ORDER BY symbol").fetchall()
     assert status == [("A", at("15:29"), Decimal("104"), 0, None), ("B", at("15:29"), Decimal("100"), 0, None)]
     assert client.count("day", "A") == 2  # 시작 따라잡기 + 마감 비교, 빈 분 없음
@@ -208,15 +211,19 @@ def test_restart_catches_up_without_duplicates_or_trade_alerts(conn, sent):
     assert len(saved_trades(conn)) == 1
     assert conn.execute("SELECT count(*) FROM minute_bars WHERE source = 'toss_live'").fetchone() == (780,)
     assert not any("매수" in m or "매도" in m for m in sent)
-    assert sent[0] == "[모의투자] 2026-09-17 시작(따라잡기 완료): 2종목, 보유 0종목, 거래 1건"
-    assert sent[1] == SUMMARY_MATCH
+    assert sent[0].splitlines()[0] == "[모의투자] 2026-09-17 시작(따라잡기 완료): 2종목, 보유 0종목, 거래 1건"
+    assert "■ 완결 거래 (1건)" in sent[0]
+    assert "- A: 손익 +13,156원" in sent[0]
+    assert sent[1].startswith("[모의투자] 2026-09-17 마감 요약: 거래 1건, 실현손익 +13,156원 (+1.32%)")
+    assert "■ 시스템 검증: 실시간 체결과 백테스트 완전 일치" in sent[1]
 
 
 def test_zero_quantity_does_not_save_trade(conn, sent):
     """종목당 금액으로 1주도 못 사면 거래를 저장·알리지 않고, 마감 비교는 일치한다."""
     code, _, _ = run_from(conn, at("08:55"), {"A": day_bars(breakout)}, capital="100")
     assert code == 0 and saved_trades(conn) == []
-    assert sent[-1] == "[모의투자] 2026-09-17 요약\n거래 0건 (승 0 / 패 0) 손익 +0원\n마감 비교: 일치"
+    assert sent[-1].startswith("[모의투자] 2026-09-17 마감 요약: 거래 0건, 실현손익 +0원 (+0.00%)")
+    assert "■ 시스템 검증: 실시간 체결과 백테스트 완전 일치" in sent[-1]
 
 
 def test_fetch_failures_alert_once_and_gap_is_filled(conn, sent):
@@ -232,14 +239,15 @@ def test_fetch_failures_alert_once_and_gap_is_filled(conn, sent):
     assert [m for m in sent if "실패" in m] == ["[모의투자] A 연속 5분 실패: TossError"]
     assert client.count("day", "A") == 3  # 시작 따라잡기 + 빈 분 + 마감 비교
     assert len(saved_trades(conn)) == 1
-    assert sent[-1] == SUMMARY_MATCH
+    assert sent[-1].startswith("[모의투자] 2026-09-17 마감 요약: 거래 1건, 실현손익 +13,156원 (+2.63%)")
+    assert "■ 시스템 검증: 실시간 체결과 백테스트 완전 일치" in sent[-1]
 
 
 def test_close_reports_mismatch_when_final_bars_differ(conn, sent):
     """마감 때 받은 봉이 실시간과 달라 거래가 다르면 요약에 불일치를 적는다."""
     code, _, _ = run_from(conn, at("08:55"), {"A": day_bars(breakout)}, final={"A": day_bars(flat)})
     assert code == 0
-    assert sent[-1].endswith("마감 비교: A 불일치: 실시간 1건 / 마감 0건")
+    assert "■ 시스템 검증: A 불일치: 실시간 1건 / 마감 0건" in sent[-1]
 
 
 def test_auth_error_propagates(conn, sent):
@@ -306,3 +314,99 @@ def test_main_auth_error_returns_1(conn, main_env, monkeypatch):
     assert paper.main(at("08:55")) == 1
     assert main_env == ["[모의투자] 2026-09-17 실행 실패: TossAuthError"]
     assert created == [("CID-X", "SECRET-X", "https://openapi.tossinvest.com", 15.0)]
+
+
+def test_read_symbol_names(tmp_path):
+    """주석이 있으면 종목명을 읽고, 없으면 종목코드를 그대로 쓴다."""
+    path = tmp_path / "symbols.txt"
+    path.write_text("005930 # 삼성전자\n000660\n  \n# 주석만 있는 줄\n035420 # NAVER \n", encoding="utf-8")
+    names = paper.read_symbol_names(path)
+    assert names == {"005930": "삼성전자", "000660": "000660", "035420": "NAVER"}
+
+
+def test_load_symbol_names(conn):
+    """DB에 저장된 종목명이 있으면 반영하고, 없으면 fallback을 유지한다."""
+    conn.execute(
+        "INSERT INTO selection_candidates (run_date, symbol, name, rank, status, metrics) "
+        "VALUES ('2026-09-17', '000660', 'SK하이닉스_DB', 1, 'selected', '{}') "
+        "ON CONFLICT (run_date, symbol) DO UPDATE SET name = EXCLUDED.name"
+    )
+    names = paper.load_symbol_names(conn, ["000660", "005930"], {"005930": "삼성전자"})
+    assert names["000660"] == "SK하이닉스_DB"
+    assert names["005930"] == "삼성전자"
+
+
+def test_start_summary_with_holding_and_waiting(conn):
+    """보유 종목의 수량, 매수가, 총액, 현재가, 평가손익 및 대기 종목이 포함된다."""
+    p = paper.Paper(conn, ["000660", "005930"], Decimal("10000000"), TODAY)
+    bar = Bar(at("12:08"), Decimal("1828000"), Decimal("1830000"), Decimal("1825000"), Decimal("1828000"), 100)
+    p.runners["000660"].holding = bar
+    p.qty["000660"] = 2
+    bar_curr = Bar(at("13:45"), Decimal("1845000"), Decimal("1850000"), Decimal("1845000"), Decimal("1848000"), 50)
+    p.runners["000660"].last_bar = bar_curr
+    bar_samsung = Bar(at("13:45"), Decimal("260000"), Decimal("261000"), Decimal("259000"), Decimal("260250"), 200)
+    p.runners["005930"].last_bar = bar_samsung
+
+    names = {"000660": "SK하이닉스", "005930": "삼성전자"}
+    text = p.start_summary(names)
+    lines = text.splitlines()
+
+    assert lines[0] == "[모의투자] 2026-09-17 시작(따라잡기 완료): 2종목, 보유 1종목, 거래 0건"
+    assert "■ 자본금: 10,000,000원 (종목당 5,000,000원)" in text
+    assert "■ 보유 종목 (1건)" in text
+    assert "- SK하이닉스(000660): 2주 @ 1,828,914원 (총 3,657,828원, 진입 12:08)" in text
+    assert "현재가 1,848,000원 | 평가손익" in text
+    assert "■ 대기 종목 (1건)" in text
+    assert "- 삼성전자(005930): 미보유 (현재가 260,250원)" in text
+
+
+def test_sync_policy_updates_stop_loss_in_runners(conn, tmp_path, monkeypatch):
+    """sync_policy 호출 시 변경된 policy.json의 손절률과 익절률이 러너 전략에 반영된다."""
+    policy_file = tmp_path / "policy.json"
+    monkeypatch.setattr(paper.policy, "POLICY_PATH", policy_file)
+    paper.policy.save_policy({"stop_pct": -1.0, "target_pct": 2.0}, policy_file)
+
+    p = paper.Paper(conn, ["000660"], Decimal("5000000"), TODAY)
+    assert p.runners["000660"].strategy.stop == Decimal("-1.0")
+    assert p.runners["000660"].strategy.target == Decimal("2.0")
+
+    # 정책 변경
+    paper.policy.save_policy({"stop_pct": -2.5, "target_pct": 3.5}, policy_file)
+    p.sync_policy()
+    assert p.runners["000660"].strategy.stop == Decimal("-2.5")
+    assert p.runners["000660"].strategy.target == Decimal("3.5")
+
+
+def test_format_buy_mail_detailed():
+    """매수 알림 메일에 종목명, 단가, 수량, 총금액, 적용 정책, 배정 예산이 상세히 포함된다."""
+    bar = Bar(at("09:41"), Decimal("100"), Decimal("101"), Decimal("99"), Decimal("101"), 100)
+    policy_data = {"strategy": "orb", "stop_pct": -1.5, "target_pct": 2.5}
+    text = paper.format_buy_mail("005930", bar, 4948, Decimal("101.0505"), Decimal("500000"), policy_data, name="삼성전자")
+
+    assert text.startswith("[모의투자] 매수 체결: 삼성전자(005930) 4,948주 @ 101원 (09:41)")
+    assert "■ 종목: 삼성전자(005930)" in text
+    assert "■ 체결 단가: 101원" in text
+    assert "■ 체결 수량: 4,948주" in text
+    assert "■ 매수 총액: 499,998원" in text
+    assert "손절 기준: -1.5%" in text
+    assert "익절 기준: +2.5%" in text
+    assert "종목 배정예산: 500,000원" in text
+
+
+def test_format_sell_mail_detailed():
+    """매도 알림 메일에 종목명, 청산사유, 진입/청산단가, 실현손익, 누적통계가 상세히 포함된다."""
+    trade = engine.Trade("005930", at("09:41"), Decimal("101.0505"), at("10:01"), Decimal("103.9480"), Decimal("2.63"), "signal")
+    saved = [("005930", Decimal("13156"))]
+    costs = paper.COSTS
+    text = paper.format_sell_mail("005930", trade, 4948, Decimal("13156"), saved, costs, name="삼성전자")
+
+    assert text.startswith("[모의투자] 매도 체결: 삼성전자(005930) 4,948주 @ 104원 (10:01) 손익 +13,156원 (+2.63%)")
+    assert "■ 종목: 삼성전자(005930)" in text
+    assert "■ 청산 사유: 목표 익절 또는 손절 도달" in text
+    assert "매수 진입: 09:41 @ 101원" in text
+    assert "매도 청산: 10:01 @ 104원" in text
+    assert "보유 시간: 20분" in text
+    assert "실현 손익: +13,156원" in text
+    assert "당일 거래: 총 1건 (승 1 / 패 0, 승률 100.0%)" in text
+
+
