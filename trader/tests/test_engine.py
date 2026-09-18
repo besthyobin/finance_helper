@@ -135,3 +135,13 @@ def test_day_runner_finish_closes_at_last_close():
     trade = runner.finish()
     assert (trade.exit_ts, trade.exit_price, trade.exit_reason) == (bars[2].ts, Decimal("105"), "day_end")
     assert runner.holding is None and runner.finish() is None
+
+
+def test_make_trade_matches_close_formula():
+    """make_trade는 진입 시가·청산 기준가로 run_day와 같은 슬리피지·수수료·세금 계산을 한다."""
+    costs = engine.Costs(Decimal("0.001"), Decimal("0.002"), Decimal("0.001"), time(15, 15))
+    t = engine.make_trade("A", datetime(2026, 9, 11, 10, tzinfo=KST), Decimal("10000"),
+                          datetime(2026, 9, 11, 11, tzinfo=KST), Decimal("10100"), "signal", costs)
+    assert (t.entry_price, t.exit_price) == (Decimal("10010"), Decimal("10089.9"))
+    assert float(t.return_pct) == pytest.approx(0.395412, abs=1e-6)
+    assert (t.symbol, t.entry_ts.hour, t.exit_ts.hour, t.exit_reason) == ("A", 10, 11, "signal")

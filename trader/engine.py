@@ -26,12 +26,17 @@ class Trade:
     exit_reason: str
 
 
-def _close(symbol, entry_bar, exit_ts, exit_base, reason, costs):
-    """진입 봉과 청산 기준가로 슬리피지·수수료·세금을 반영한 Trade를 만든다."""
-    buy = entry_bar.open * (1 + costs.slippage)
+def make_trade(symbol, entry_ts, entry_open, exit_ts, exit_base, reason, costs):
+    """진입 시가·청산 기준가에 슬리피지를, 수익률에 수수료(양쪽)·매도세를 반영한 Trade를 만든다."""
+    buy = entry_open * (1 + costs.slippage)
     sell = exit_base * (1 - costs.slippage)
     ret = (sell * (1 - costs.fee - costs.tax) / (buy * (1 + costs.fee)) - 1) * 100
-    return Trade(symbol, entry_bar.ts, buy, exit_ts, sell, ret, reason)
+    return Trade(symbol, entry_ts, buy, exit_ts, sell, ret, reason)
+
+
+def _close(symbol, entry_bar, exit_ts, exit_base, reason, costs):
+    """진입 봉과 청산 기준가로 슬리피지·수수료·세금을 반영한 Trade를 만든다."""
+    return make_trade(symbol, entry_bar.ts, entry_bar.open, exit_ts, exit_base, reason, costs)
 
 
 class DayRunner:
