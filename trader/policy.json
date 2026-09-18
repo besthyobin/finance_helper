@@ -1,0 +1,7 @@
+{
+  "strategy": "orb",
+  "stop_pct": -1.5,
+  "target_pct": 2.0,
+  "range_end": "09:30",
+  "exit_at": "15:15"
+}

@@ -243,3 +243,17 @@ def test_load_daily_bars_filters_symbols_and_dates(conn):
     got = store.load_daily_bars(conn, ["B"], date(2026, 9, 15), date(2026, 9, 16))
     assert {s: [b.date.day for b in bs] for s, bs in got.items()} == {"B": [15, 16]}
     assert sorted(store.load_daily_bars(conn, None, date(2026, 9, 14), date(2026, 9, 14))) == ["A", "B"]
+
+
+def test_bar_tables_are_hypertables_with_minute_compression(conn):
+    """minute_bars·daily_bars는 하이퍼테이블이고, 30일 압축 정책은 minute_bars에만 있다."""
+    tables = conn.execute(
+        "SELECT hypertable_name, compression_enabled FROM timescaledb_information.hypertables "
+        "WHERE hypertable_name IN ('minute_bars', 'daily_bars') ORDER BY 1"
+    ).fetchall()
+    assert tables == [("daily_bars", False), ("minute_bars", True)]
+    policies = conn.execute(
+        "SELECT hypertable_name, config->>'compress_after' FROM timescaledb_information.jobs "
+        "WHERE proc_name = 'policy_compression'"
+    ).fetchall()
+    assert policies == [("minute_bars", "30 days")]

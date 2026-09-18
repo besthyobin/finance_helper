@@ -5,10 +5,14 @@
 
 ## 설치
 
-1. PostgreSQL 15 서비스(`postgresql-x64-15`, 포트 5432)에 DB와 사용자 생성
+1. PostgreSQL 15 서비스(`postgresql-x64-15`, 포트 5432)에 DB와 사용자, TimescaleDB 확장 생성
+
+   `minute_bars`·`daily_bars`는 TimescaleDB 하이퍼테이블이다(1분봉은 30일 지난 청크 자동 압축). 서버 `postgresql.conf`에 `shared_preload_libraries = 'timescaledb'`가 있어야 하고, 확장은 슈퍼유저만 만들 수 있어 DB마다 한 번 만든다.
 
    ```powershell
    D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U postgres -c "CREATE USER trader WITH PASSWORD '비밀번호'" -c "CREATE DATABASE trader OWNER trader" -c "CREATE DATABASE trader_test OWNER trader"
+   D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U postgres -d trader -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+   D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U postgres -d trader_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
    D:\PIE\PostgreSQL_15\bin\psql.exe -h localhost -U trader -d trader -f schema.sql
    ```
 
