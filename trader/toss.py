@@ -18,6 +18,7 @@ RANKINGS_PATH = "/api/v1/rankings"
 STOCKS_PATH = "/api/v1/stocks"
 PAGE_SIZE = 200
 MAX_PAGES = 10
+DAILY_MAX_PAGES = 40
 
 
 class TossError(Exception):
@@ -55,6 +56,13 @@ def _to_bar(candle):
     end = datetime.fromisoformat(candle["timestamp"]).astimezone(KST)
     return Bar(end - timedelta(minutes=1), Decimal(candle["openPrice"]), Decimal(candle["highPrice"]),
                Decimal(candle["lowPrice"]), Decimal(candle["closePrice"]), int(Decimal(candle["volume"])))
+
+
+def _to_daily(candle):
+    """일봉 캔들 한 개를 KST 날짜·Decimal 가격·int 거래량의 DailyBar로 바꾼다."""
+    return DailyBar(datetime.fromisoformat(candle["timestamp"]).astimezone(KST).date(),
+                    Decimal(candle["openPrice"]), Decimal(candle["highPrice"]), Decimal(candle["lowPrice"]),
+                    Decimal(candle["closePrice"]), int(Decimal(candle["volume"])))
 
 
 def _parsed(convert, body):
@@ -295,7 +303,26 @@ class TossClient:
     def fetch_daily(self, symbol, count):
         """수정주가 일봉 count개를 날짜 오름차순 DailyBar로 반환한다. 장중이면 오늘 진행 중인 일봉이 섞일 수 있다."""
         body = self._get(CANDLES_PATH, {"symbol": symbol, "interval": "1d", "count": count, "adjusted": "true"})
-        return _parsed(lambda b: sorted((DailyBar(
-            datetime.fromisoformat(c["timestamp"]).astimezone(KST).date(), Decimal(c["openPrice"]),
-            Decimal(c["highPrice"]), Decimal(c["lowPrice"]), Decimal(c["closePrice"]), int(Decimal(c["volume"])),
-        ) for c in b["result"]["candles"]), key=lambda d: d.date), body)
+        return _parsed(lambda b: sorted((_to_daily(c) for c in b["result"]["candles"]),
+                                        key=lambda d: d.date), body)
+
+    def fetch_daily_history(self, symbol, since):
+        """since(포함) 이후 수정주가 일봉을 200개씩 거꾸로 받아 날짜 오름차순 DailyBar로 반환한다."""
+        bars = {}
+        before = None
+        for _ in range(DAILY_MAX_PAGES):
+            params = {"symbol": symbol, "interval": "1d", "count": 200, "adjusted": "true"}
+            if before:
+                params["before"] = before
+            body = self._get(CANDLES_PATH, params)
+            candles, next_before = _parsed(
+                lambda b: ([_to_daily(c) for c in b["result"]["candles"]], b["result"].get("nextBefore")), body)
+            for d in candles:
+                if d.date >= since:
+                    bars[d.date] = d
+            if not candles or not next_before or min(d.date for d in candles) < since:
+                break
+            before = next_before
+        else:
+            raise TossError("PAGINATION")
+        return [bars[d] for d in sorted(bars)]

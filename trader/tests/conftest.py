@@ -18,5 +18,5 @@ def conn():
     with psycopg.connect(url, autocommit=True) as c:
         c.execute((ROOT / "schema.sql").read_text(encoding="utf-8"))
         c.execute("TRUNCATE minute_bars, collect_runs, backtest_runs, paper_status, paper_trades, "
-                  "selection_candidates CASCADE")
+                  "selection_candidates, daily_bars CASCADE")
         yield c

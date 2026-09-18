@@ -1,4 +1,4 @@
-"""minute_bars·collect_runs·backtest·paper·selection 테이블 저장과 조회."""
+"""minute_bars·daily_bars·collect_runs·backtest·paper·selection 테이블 저장과 조회."""
 import json
 from datetime import datetime, time, timedelta
 from functools import partial
@@ -6,7 +6,7 @@ from functools import partial
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from bars import KST, Bar
+from bars import KST, Bar, DailyBar
 
 
 def save_bars(conn, symbol, bars, source="kis"):
@@ -151,3 +151,29 @@ def load_candidates(conn, run_date):
             "SELECT symbol, name, rank, status, reason, metrics FROM selection_candidates "
             "WHERE run_date = %s ORDER BY symbol", (run_date,),
         ).fetchall()
+
+
+def save_daily_bars(conn, symbol, bars):
+    """일봉을 한 트랜잭션으로 저장한다. 같은 (symbol, day)는 새 값으로 덮어쓴다(수정주가 갱신)."""
+    with conn.transaction(), conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO daily_bars (symbol, day, open, high, low, close, volume) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (symbol, day) DO UPDATE SET open = EXCLUDED.open, high = EXCLUDED.high, "
+            "low = EXCLUDED.low, close = EXCLUDED.close, volume = EXCLUDED.volume",
+            [(symbol, b.date, b.open, b.high, b.low, b.close, b.volume) for b in bars],
+        )
+
+
+def load_daily_bars(conn, symbols, date_from, date_to):
+    """종목·기간(양끝 포함) 일봉을 {symbol: 날짜 오름차순 DailyBar}로 반환한다. symbols가 None이면 전 종목."""
+    sql = ("SELECT symbol, day, open, high, low, close, volume FROM daily_bars "
+           "WHERE day >= %s AND day <= %s")
+    args = [date_from, date_to]
+    if symbols is not None:
+        sql += " AND symbol = ANY(%s)"
+        args.append(list(symbols))
+    out = {}
+    for symbol, day, o, h, l, c, v in conn.execute(sql + " ORDER BY symbol, day", args):
+        out.setdefault(symbol, []).append(DailyBar(day, o, h, l, c, v))
+    return out

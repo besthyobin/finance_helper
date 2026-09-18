@@ -533,3 +533,55 @@ def test_market_data_rejects_bad_body(tmp_path, call):
     with pytest.raises(TossError) as e:
         call(client)
     assert e.value.code == "BAD_RESPONSE"
+
+
+def daily_candle(day, price="100"):
+    """일봉 캔들 한 개를 응답 형식으로 만든다."""
+    return {"timestamp": f"{day.isoformat()}T00:00:00.000+09:00", "openPrice": price, "highPrice": price,
+            "lowPrice": price, "closePrice": price, "volume": "10", "currency": "KRW"}
+
+
+def daily_market(all_days):
+    """before 이하(없으면 전체) 날짜를 최신순 200개씩 주고 nextBefore를 마지막 날짜 하루 전으로 주는 on_get."""
+    def on_get(params):
+        """토스 일봉 페이지를 흉내 낸다."""
+        before = date.fromisoformat(params["before"][:10]) if "before" in params else None
+        page = sorted((d for d in all_days if before is None or d <= before), reverse=True)[:200]
+        next_before = (page[-1] - timedelta(days=1)).isoformat() + "T00:00:00.000+09:00" if page else None
+        return ok([daily_candle(d) for d in page], next_before)
+    return on_get
+
+
+def test_fetch_daily_history_walks_pages_until_since(tmp_path):
+    """200개씩 거꾸로 받다가 since보다 이른 날짜가 나온 페이지에서 멈추고 since 이후만 오름차순으로 준다."""
+    all_days = [date(2024, 1, 1) + timedelta(days=i) for i in range(500)]
+    fake = FakeToss(on_get=daily_market(all_days))
+    bars = make_client(tmp_path, fake).fetch_daily_history("005930", date(2024, 3, 1))
+    assert (bars[0].date, bars[-1].date, len(bars)) == (date(2024, 3, 1), all_days[-1], 440)
+    assert len(fake.gets()) == 3
+    first, second = fake.gets()[0][2]["params"], fake.gets()[1][2]["params"]
+    assert first == {"symbol": "005930", "interval": "1d", "count": 200, "adjusted": "true"}
+    assert second["before"] == "2024-10-26T00:00:00.000+09:00"
+
+
+def test_fetch_daily_history_empty_page_returns_empty(tmp_path):
+    """첫 페이지가 비면 빈 목록."""
+    fake = FakeToss(on_get=lambda params: ok([], None))
+    assert make_client(tmp_path, fake).fetch_daily_history("005930", date(2020, 1, 1)) == []
+
+
+def test_fetch_daily_history_raises_after_40_pages(tmp_path):
+    """40페이지를 받아도 since에 닿지 않으면 PAGINATION 예외."""
+    fake = FakeToss(on_get=lambda params: ok([daily_candle(date(2026, 1, 1))], "2025-12-31T00:00:00+09:00"))
+    with pytest.raises(TossError) as e:
+        make_client(tmp_path, fake).fetch_daily_history("005930", date(2020, 1, 1))
+    assert e.value.code == "PAGINATION"
+    assert len(fake.gets()) == 40
+
+
+def test_fetch_daily_history_rejects_bad_body(tmp_path):
+    """candles가 없으면 BAD_RESPONSE."""
+    fake = FakeToss(on_get=lambda params: FakeResponse({"result": {}}))
+    with pytest.raises(TossError) as e:
+        make_client(tmp_path, fake).fetch_daily_history("005930", date(2020, 1, 1))
+    assert e.value.code == "BAD_RESPONSE"

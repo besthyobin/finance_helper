@@ -7,7 +7,7 @@ import pytest
 
 import engine
 import store
-from bars import KST, Bar
+from bars import KST, Bar, DailyBar
 
 TODAY = date(2026, 9, 14)
 SCHEMA = (Path(__file__).resolve().parents[1] / "schema.sql").read_text(encoding="utf-8")
@@ -220,3 +220,26 @@ def test_save_candidates_replaces_same_day_and_keeps_other_days(conn):
     assert (row["symbol"], row["name"], row["rank"], row["status"], row["reason"]) == ("A", "종목A", 3, "selected", None)
     assert row["metrics"] == {"close": "50000", "day": "2026-09-17"}
     assert [r["symbol"] for r in store.load_candidates(conn, prev)] == ["X"]
+
+
+def daily(day, close):
+    """시가=고가=저가=종가인 일봉."""
+    p = Decimal(close)
+    return DailyBar(day, p, p, p, p, 1000)
+
+
+def test_save_daily_bars_round_trip_and_updates_same_day(conn):
+    """일봉을 저장·조회하고, 같은 날을 다시 저장하면 새 값(수정주가)으로 바뀐다."""
+    store.save_daily_bars(conn, "A", [daily(date(2026, 9, 17), "100"), daily(date(2026, 9, 16), "90")])
+    store.save_daily_bars(conn, "A", [daily(date(2026, 9, 17), "50")])
+    assert store.load_daily_bars(conn, ["A"], date(2026, 9, 1), date(2026, 9, 30)) == {
+        "A": [daily(date(2026, 9, 16), "90"), daily(date(2026, 9, 17), "50")]}
+
+
+def test_load_daily_bars_filters_symbols_and_dates(conn):
+    """종목 목록과 날짜 범위(양끝 포함)로 거르고, 종목이 None이면 전 종목을 준다."""
+    for symbol in ("A", "B"):
+        store.save_daily_bars(conn, symbol, [daily(date(2026, 9, d), "100") for d in (14, 15, 16)])
+    got = store.load_daily_bars(conn, ["B"], date(2026, 9, 15), date(2026, 9, 16))
+    assert {s: [b.date.day for b in bs] for s, bs in got.items()} == {"B": [15, 16]}
+    assert sorted(store.load_daily_bars(conn, None, date(2026, 9, 14), date(2026, 9, 14))) == ["A", "B"]

@@ -95,3 +95,15 @@ CREATE TABLE IF NOT EXISTS selection_candidates (
     metrics    jsonb   NOT NULL,          -- 위험 지표, 기술지표, 두 구간 백테스트 수치
     PRIMARY KEY (run_date, symbol)
 );
+
+-- 수정주가 일봉. 수집할 때마다 전체 기간을 다시 받아 덮어쓴다(분할·배당으로 과거 값이 바뀜)
+CREATE TABLE IF NOT EXISTS daily_bars (
+    symbol  text    NOT NULL,
+    day     date    NOT NULL,
+    open    numeric NOT NULL,
+    high    numeric NOT NULL,
+    low     numeric NOT NULL,
+    close   numeric NOT NULL,
+    volume  bigint  NOT NULL,
+    PRIMARY KEY (symbol, day)
+);
