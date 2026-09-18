@@ -62,3 +62,243 @@ th { color: var(--muted); font-weight: 600; }
 select { font: inherit; }
 .up { color: var(--up); }
 .down { color: var(--down); }
+
+/* 매매 정책 카드 */
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-top: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.badge {
+  background: #eef3fc;
+  color: #0a5fd6;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.policy-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.policy-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.policy-value {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+/* 정책 설정 폼 */
+.policy-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.input-wrap input {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  width: 100px;
+  background: var(--bg);
+  color: var(--fg);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.15s ease;
+}
+
+.input-wrap input:focus {
+  outline: none;
+  border-color: #0a5fd6;
+  background: #fff;
+}
+
+.input-wrap .unit {
+  position: absolute;
+  right: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.btn-primary {
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 7px 16px;
+  background: #0a5fd6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: #084cb0;
+}
+
+.btn-primary:active {
+  background: #063c8a;
+}
+
+.form-msg {
+  font-size: 0.85rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.form-msg.success {
+  background: #e6f4ea;
+  color: #137333;
+}
+
+.form-msg.error {
+  background: #fce8e6;
+  color: #c5221f;
+}
+
+/* 계좌 자산 요약 카드 */
+.account-card {
+  border-top: 3px solid #0a5fd6;
+}
+
+.account-hero {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.account-total-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.account-total-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.account-total-value {
+  font-size: 1.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
+
+.account-total-unit {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.pnl-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pnl-badge.up {
+  background: #fce8e6;
+  color: var(--up);
+}
+
+.pnl-badge.down {
+  background: #e8f0fe;
+  color: var(--down);
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.account-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.account-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

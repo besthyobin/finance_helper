@@ -13,6 +13,89 @@
   </header>
   <p id="banner" hidden></p>
 
+  <section class="card policy-card">
+    <div class="card-header">
+      <h2>매매 정책 및 설정</h2>
+      <span id="policy-status-badge" class="badge">실시간 적용 중</span>
+    </div>
+    <div class="policy-grid">
+      <div class="policy-item">
+        <span class="policy-label">운용 전략</span>
+        <span class="policy-value" id="disp-strategy">ORB (시초가 돌파)</span>
+      </div>
+      <div class="policy-item">
+        <span class="policy-label">시초 범위</span>
+        <span class="policy-value" id="disp-range">09:00 ~ 09:30</span>
+      </div>
+      <div class="policy-item">
+        <span class="policy-label">당일 청산</span>
+        <span class="policy-value" id="disp-exit">15:15 강제 청산</span>
+      </div>
+      <div class="policy-item">
+        <span class="policy-label">비용 구조</span>
+        <span class="policy-value" id="disp-costs">수수료 0.015% · 세금 0.20% · 슬리피지 0.05%</span>
+      </div>
+    </div>
+
+    <form id="policy-form" class="policy-form">
+      <div class="form-group">
+        <label for="input-stop">손절선 (Stop-loss)</label>
+        <div class="input-wrap">
+          <input type="number" id="input-stop" step="0.1" min="-50" max="-0.1" required>
+          <span class="unit">%</span>
+        </div>
+        <span class="hint">매수가 대비 하락 시 손절 (기본: -1.0%)</span>
+      </div>
+      <div class="form-group">
+        <label for="input-target">목표 익절 (Target)</label>
+        <div class="input-wrap">
+          <input type="number" id="input-target" step="0.1" min="0.1" max="100" required>
+          <span class="unit">%</span>
+        </div>
+        <span class="hint">매수가 대비 상승 시 익절 (기본: 2.0%)</span>
+      </div>
+      <div class="form-actions">
+        <button type="submit" id="btn-save-policy" class="btn-primary">설정 저장</button>
+        <span id="policy-msg" class="form-msg" hidden></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="card account-card">
+    <div class="card-header">
+      <h2>계좌 총액 및 자산 요약</h2>
+      <span class="badge">실시간 집계</span>
+    </div>
+    <div class="account-hero">
+      <div class="account-total">
+        <span class="account-total-label">총 평가 자산</span>
+        <div class="account-total-row">
+          <span class="account-total-value" id="acc-total-assets">-</span>
+          <span class="account-total-unit">원</span>
+          <span id="acc-total-pnl-badge" class="pnl-badge">-</span>
+        </div>
+      </div>
+    </div>
+    <div class="account-grid">
+      <div class="account-item">
+        <span class="account-label">예수금 (현금 잔고)</span>
+        <span class="account-value" id="acc-cash">-</span>
+      </div>
+      <div class="account-item">
+        <span class="account-label">보유 주식 평가액</span>
+        <span class="account-value" id="acc-stock-eval">-</span>
+      </div>
+      <div class="account-item">
+        <span class="account-label">투자 원금 (자본금)</span>
+        <span class="account-value" id="acc-capital">-</span>
+      </div>
+      <div class="account-item">
+        <span class="account-label">당일 손익 세부 (실현 / 평가)</span>
+        <span class="account-value" id="acc-pnl-detail">-</span>
+      </div>
+    </div>
+  </section>
+
   <section>
     <h2>현재 상태</h2>
     <table>
