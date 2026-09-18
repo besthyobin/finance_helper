@@ -23,6 +23,22 @@ BEGIN
     END IF;
 END $$;
 
+-- TimescaleDB 하이퍼테이블(7일 청크). 확장은 슈퍼유저가 DB마다 한 번 만든다(README 설치 참고)
+SELECT create_hypertable('minute_bars', by_range('ts', INTERVAL '7 days'), if_not_exists => TRUE, migrate_data => TRUE);
+
+-- 30일 지난 청크는 종목·출처별로 묶어 압축한다. 압축된 청크가 있으면 설정을 바꿀 수 없어 처음 한 번만 켠다
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+        WHERE hypertable_name = 'minute_bars' AND compression_enabled
+    ) THEN
+        ALTER TABLE minute_bars SET (timescaledb.compress, timescaledb.compress_segmentby = 'source, symbol',
+                                     timescaledb.compress_orderby = 'ts');
+    END IF;
+END $$;
+SELECT add_compression_policy('minute_bars', INTERVAL '30 days', if_not_exists => TRUE);
+
 CREATE TABLE IF NOT EXISTS collect_runs (
     symbol        text        NOT NULL,
     trade_date    date        NOT NULL,
@@ -107,3 +123,6 @@ CREATE TABLE IF NOT EXISTS daily_bars (
     volume  bigint  NOT NULL,
     PRIMARY KEY (symbol, day)
 );
+
+-- 1년 청크 하이퍼테이블. 수집마다 전체를 덮어써서 압축은 하지 않는다
+SELECT create_hypertable('daily_bars', by_range('day', INTERVAL '1 year'), if_not_exists => TRUE, migrate_data => TRUE);
